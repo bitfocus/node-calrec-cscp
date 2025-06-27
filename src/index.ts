@@ -1,4 +1,4 @@
-// src/index.ts
+/** biome-ignore-all assist/source/organizeImports: stupid */
 
 export { CalrecClient } from "./client";
 export * from "./types";

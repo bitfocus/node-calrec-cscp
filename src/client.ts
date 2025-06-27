@@ -10,6 +10,7 @@ import {
 	type ConsoleInfo,
 	NakError,
 	type ParsedMessage,
+	type ClientState,
 } from "./types";
 import {
 	dbToChannelLevel,
@@ -39,7 +40,11 @@ function parseNakError(errorCode: number): string {
 export class CalrecClient extends EventEmitter {
 	private options: Required<CalrecClientOptions>;
 	private socket: net.Socket | null = null;
-	private connectionState: ConnectionState = ConnectionState.DISCONNECTED;
+	private state: ClientState = {
+		connectionState: ConnectionState.DISCONNECTED,
+		consoleInfo: null,
+		consoleName: null,
+	};
 	private reconnectTimeout: NodeJS.Timeout | null = null;
 	private dataBuffer: Buffer = Buffer.alloc(0);
 	private commandQueue: {
@@ -68,7 +73,7 @@ export class CalrecClient extends EventEmitter {
 			reconnectInterval: 5000,
 			...options,
 		};
-		this.setConnectionState(ConnectionState.DISCONNECTED);
+		this.setState({ connectionState: ConnectionState.DISCONNECTED });
 	}
 
 	// Safely override EventEmitter methods with strong types
@@ -91,22 +96,45 @@ export class CalrecClient extends EventEmitter {
 		return super.emit(event, ...args);
 	}
 
-	private setConnectionState(newState: ConnectionState) {
-		if (this.connectionState !== newState) {
-			this.connectionState = newState;
-			this.emit("connectionStateChange", this.connectionState);
+	private setState(newState: Partial<ClientState>) {
+		const oldState = { ...this.state };
+		this.state = { ...this.state, ...newState };
+
+		// Emit connection state change if it changed
+		if (oldState.connectionState !== this.state.connectionState) {
+			this.emit("connectionStateChange", this.state.connectionState);
 		}
 	}
 
-	public getState(): ConnectionState {
-		return this.connectionState;
+	public getState(): ClientState {
+		return { ...this.state };
+	}
+
+	public getConnectionState(): ConnectionState {
+		return this.state.connectionState;
+	}
+
+	private ensureConnected(): void {
+		if (this.state.connectionState !== ConnectionState.CONNECTED) {
+			throw new Error(
+				`Client is not connected. Current state: ${this.state.connectionState}`,
+			);
+		}
+		if (!this.state.consoleInfo || !this.state.consoleName) {
+			throw new Error(
+				"Client is not fully initialized. Console info and name are required.",
+			);
+		}
 	}
 
 	/**
 	 * Connects to the Calrec console.
 	 */
 	public connect(): void {
-		if (this.socket || this.connectionState === ConnectionState.CONNECTING) {
+		if (
+			this.socket ||
+			this.state.connectionState === ConnectionState.CONNECTING
+		) {
 			return;
 		}
 
@@ -115,20 +143,37 @@ export class CalrecClient extends EventEmitter {
 			this.reconnectTimeout = null;
 		}
 
-		this.setConnectionState(ConnectionState.CONNECTING);
+		this.setState({
+			connectionState: ConnectionState.CONNECTING,
+			consoleInfo: null,
+			consoleName: null,
+		});
+
 		this.socket = new net.Socket();
-		this.socket.connect(this.options.port, this.options.host, () => {
-			this.setConnectionState(ConnectionState.CONNECTED);
+		this.socket.connect(this.options.port, this.options.host, async () => {
+			this.setState({ connectionState: ConnectionState.CONNECTED });
 			this.emit("connect");
 			this.processCommandQueue();
-			this.getConsoleInfo()
-				.then(() => this.emit("ready"))
-				.catch((e) => this.emit("error", e));
+
+			try {
+				// Get console info and name to complete initialization
+				const [consoleInfo, consoleName] = await Promise.all([
+					this.getConsoleInfoInternal(),
+					this.getConsoleNameInternal(),
+				]);
+
+				this.setState({ consoleInfo, consoleName });
+				this.emit("ready");
+			} catch (error) {
+				this.setState({ connectionState: ConnectionState.ERROR });
+				this.emit("error", error as Error);
+			}
 		});
 
 		this.socket.on("data", this.handleData.bind(this));
 		this.socket.on("close", this.handleDisconnect.bind(this));
 		this.socket.on("error", (err) => {
+			this.setState({ connectionState: ConnectionState.ERROR });
 			this.emit("error", err);
 		});
 	}
@@ -138,12 +183,16 @@ export class CalrecClient extends EventEmitter {
 		this.socket = null;
 		this.emit("disconnect");
 
-		if (this.connectionState !== ConnectionState.DISCONNECTED) {
-			this.setConnectionState(ConnectionState.DISCONNECTED);
+		if (this.state.connectionState !== ConnectionState.DISCONNECTED) {
+			this.setState({
+				connectionState: ConnectionState.DISCONNECTED,
+				consoleInfo: null,
+				consoleName: null,
+			});
 		}
 
 		if (this.options.autoReconnect) {
-			this.setConnectionState(ConnectionState.RECONNECTING);
+			this.setState({ connectionState: ConnectionState.RECONNECTING });
 			this.reconnectTimeout = setTimeout(
 				() => this.connect(),
 				this.options.reconnectInterval,
@@ -293,7 +342,10 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	private async processCommandQueue(): Promise<void> {
-		if (this.isProcessing || this.connectionState !== ConnectionState.CONNECTED)
+		if (
+			this.isProcessing ||
+			this.state.connectionState !== ConnectionState.CONNECTED
+		)
 			return;
 		this.isProcessing = true;
 
@@ -332,7 +384,7 @@ export class CalrecClient extends EventEmitter {
 		isFaderLevel = false,
 	): Promise<T> {
 		return new Promise((resolve, reject) => {
-			if (this.connectionState !== ConnectionState.CONNECTED) {
+			if (this.state.connectionState !== ConnectionState.CONNECTED) {
 				return reject(new Error("Not connected to the console."));
 			}
 			const queue = isFaderLevel ? this.faderLevelQueue : this.commandQueue;
@@ -357,7 +409,9 @@ export class CalrecClient extends EventEmitter {
 					if (this.requestMap.has(requestKey)) {
 						this.requestMap.delete(requestKey);
 						reject(
-							new Error(`Request for command ${command.toString(16)} timed out.`),
+							new Error(
+								`Request for command ${command.toString(16)} timed out.`,
+							),
 						);
 					}
 				}, 5000);
@@ -374,15 +428,26 @@ export class CalrecClient extends EventEmitter {
 
 	// --- PUBLIC API METHODS ---
 
+	private async getConsoleInfoInternal(): Promise<ConsoleInfo> {
+		return this.sendCommand(COMMANDS.READ_CONSOLE_INFO);
+	}
+
+	private async getConsoleNameInternal(): Promise<string> {
+		return this.sendCommand(COMMANDS.READ_CONSOLE_NAME);
+	}
+
 	public getConsoleInfo(): Promise<ConsoleInfo> {
+		this.ensureConnected();
 		return this.sendCommand(COMMANDS.READ_CONSOLE_INFO);
 	}
 
 	public getConsoleName(): Promise<string> {
+		this.ensureConnected();
 		return this.sendCommand(COMMANDS.READ_CONSOLE_NAME);
 	}
 
 	public setFaderLevel(faderId: number, level: number): Promise<void> {
+		this.ensureConnected();
 		const data = Buffer.alloc(4);
 		data.writeUInt16BE(faderId, 0);
 		data.writeUInt16BE(Math.min(1023, Math.max(0, level)), 2);
@@ -390,12 +455,14 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	public getFaderLevel(faderId: number): Promise<number> {
+		this.ensureConnected();
 		const data = Buffer.alloc(2);
 		data.writeUInt16BE(faderId, 0);
 		return this.sendCommand(COMMANDS.READ_FADER_LEVEL, data);
 	}
 
 	public setFaderCut(faderId: number, isCut: boolean): Promise<void> {
+		this.ensureConnected();
 		const data = Buffer.alloc(3);
 		data.writeUInt16BE(faderId, 0);
 		data[2] = isCut ? 0 : 1;
@@ -403,12 +470,14 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	public getFaderLabel(faderId: number): Promise<string> {
+		this.ensureConnected();
 		const data = Buffer.alloc(2);
 		data.writeUInt16BE(faderId, 0);
 		return this.sendCommand(COMMANDS.READ_FADER_LABEL, data);
 	}
 
 	public setAuxRouting(auxId: number, routes: boolean[]): Promise<void> {
+		this.ensureConnected();
 		if (routes.length > 192)
 			throw new Error("Maximum of 192 fader routes allowed.");
 		const data = Buffer.alloc(26);
@@ -437,6 +506,7 @@ export class CalrecClient extends EventEmitter {
 	 * @returns Promise that resolves when the command is sent.
 	 */
 	public setFaderLevelDb(faderId: number, db: number): Promise<void> {
+		this.ensureConnected();
 		const level = dbToChannelLevel(db);
 		return this.setFaderLevel(faderId, level);
 	}
@@ -448,6 +518,7 @@ export class CalrecClient extends EventEmitter {
 	 * @returns Promise that resolves to the decibel value.
 	 */
 	public async getFaderLevelDb(faderId: number): Promise<number> {
+		this.ensureConnected();
 		const level = await this.getFaderLevel(faderId);
 		return channelLevelToDb(level);
 	}
@@ -460,6 +531,7 @@ export class CalrecClient extends EventEmitter {
 	 * @returns Promise that resolves when the command is sent.
 	 */
 	public setMainFaderLevelDb(faderId: number, db: number): Promise<void> {
+		this.ensureConnected();
 		const level = dbToMainLevel(db);
 		return this.setFaderLevel(faderId, level);
 	}
@@ -471,6 +543,7 @@ export class CalrecClient extends EventEmitter {
 	 * @returns Promise that resolves to the decibel value.
 	 */
 	public async getMainFaderLevelDb(faderId: number): Promise<number> {
+		this.ensureConnected();
 		const level = await this.getFaderLevel(faderId);
 		return mainLevelToDb(level);
 	}

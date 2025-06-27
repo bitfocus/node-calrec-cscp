@@ -13,15 +13,25 @@ const MAIN_FADER_MAP: ConversionPoint[] = [
 	[1023, 0],
 ];
 
+// TODO: Fix this.. It should adhere to the complete list of points in the spec. For now: good enough.
 const CHANNEL_FADER_MAP: ConversionPoint[] = [
-	[0, -100],
-	[40, -100],
-	[80, -60],
-	[162, -40],
-	[519, -20],
-	[760, 0],
-	[1004, 10],
-	[1023, 10],
+	[0, -100],   // 0-40 = -100dB (faded out and silent)
+	[40, -100],  // End of silent range
+	[41, -100],  // Start of linear steps from -100 to -60dB
+	[80, -60],   // End of -100 to -60dB range
+	[81, -60],   // Start of linear steps from -60 to -40dB
+	[162, -40],  // End of -60 to -40dB range
+	[163, -40],  // Start of linear steps from -40 to -20dB
+	[221, -35],  // -35dB point
+	[281, -30],  // -30dB point
+	[340, -25],  // -25dB point
+	[400, -20],  // -20dB point
+	[519, -10],  // -10dB point
+	[639, -5],   // -5dB point
+	[760, 0],    // End of -10 to 0dB range
+	[761, 0],    // Start of linear steps from 0 to 10dB
+	[1004, 10],  // End of 0 to 10dB range
+	[1023, 10],  // 1004-1023 = 10dB
 ];
 
 /**
