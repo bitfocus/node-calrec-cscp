@@ -41,9 +41,11 @@ const protocol_1 = require("./protocol");
 const types_1 = require("./types");
 const converters_1 = require("./converters");
 const SOH = 0xf1;
-const COMMAND_BURST_RATE_MS = 20;
-const COMMAND_BURST_AMOUNT = 3;
 const FADER_LEVEL_RATE_MS = 100; // 10 per second
+const COMMAND_RESPONSE_TIMEOUT_MS = 100; // Timeout for command responses in ms
+const LABEL_FETCH_MAX_RETRIES = 5; // Max retries before marking label as failed
+const LABEL_REFETCH_INTERVAL_MS = 60000; // Periodic refetch interval (1 min)
+const GLOBAL_COMMAND_RATE_MS = 10; // Minimum 10ms between any command
 function parseNakError(errorCode) {
     const errors = [];
     if (errorCode & types_1.NakError.COMMAND_NOT_SUPPORTED)
@@ -77,12 +79,17 @@ class CalrecClient extends node_events_1.EventEmitter {
         this.faderLevelQueue = [];
         this.isProcessing = false;
         this.lastFaderLevelSent = 0;
+        this.lastCommandSent = 0;
         this.requestMap = new Map();
+        this.commandResponseQueue = [];
+        this.commandInFlight = false;
+        const { maxFaderCount, ...rest } = options;
         this.options = {
             autoReconnect: true,
             reconnectInterval: 5000,
-            ...options,
+            ...rest,
         };
+        this.maxFaderCount = maxFaderCount;
         this.setState({ connectionState: types_1.ConnectionState.DISCONNECTED });
     }
     // Safely override EventEmitter methods with strong types
@@ -198,7 +205,17 @@ class CalrecClient extends node_events_1.EventEmitter {
                 if (this.dataBuffer.length > 1) {
                     const errorCode = this.dataBuffer[1];
                     const errorMessage = parseNakError(errorCode);
-                    this.emit("error", new Error(errorMessage));
+                    // Try to reject the matching pending request
+                    let matched = false;
+                    for (const [requestKey, { reject }] of this.requestMap.entries()) {
+                        reject(new Error(`NAK: ${errorMessage}`));
+                        this.requestMap.delete(requestKey);
+                        matched = true;
+                        break; // Only reject one per NAK
+                    }
+                    if (!matched) {
+                        this.emit("error", new Error(errorMessage));
+                    }
                     this.dataBuffer = this.dataBuffer.slice(2);
                     return;
                 }
@@ -297,37 +314,49 @@ class CalrecClient extends node_events_1.EventEmitter {
             case protocol_1.COMMANDS.WRITE_FADER_PFL:
                 this.emit("faderPflChange", id, data[2] === 1);
                 break;
+            case protocol_1.COMMANDS.READ_FADER_LABEL: {
+                const labelBuf = data.slice(2);
+                const labelStr = Buffer.isBuffer(labelBuf) ? labelBuf.toString('utf8') : String(labelBuf);
+                this.emit("faderLabelChange", id, labelStr);
+                break;
+            }
+            case protocol_1.COMMANDS.READ_MAIN_FADER_LABEL: {
+                const labelBuf = data.slice(2);
+                const labelStr = Buffer.isBuffer(labelBuf) ? labelBuf.toString('utf8') : String(labelBuf);
+                this.emit("mainLabelChange", id, labelStr);
+                break;
+            }
             default:
                 this.emit("unsolicitedMessage", { command, data });
         }
     }
-    async processCommandQueue() {
-        if (this.isProcessing ||
-            this.state.connectionState !== types_1.ConnectionState.CONNECTED)
-            return;
-        this.isProcessing = true;
-        if (!this.socket) {
-            this.isProcessing = false;
-            return;
-        }
-        if (this.faderLevelQueue.length > 0 &&
-            Date.now() - this.lastFaderLevelSent > FADER_LEVEL_RATE_MS) {
-            const nextFaderCommand = this.faderLevelQueue.shift();
-            if (nextFaderCommand) {
-                const { command, data } = nextFaderCommand;
-                this.socket.write((0, protocol_1.buildPacket)(command, data));
-                this.lastFaderLevelSent = Date.now();
+    enqueueCommandWithResponse(commandFn) {
+        return new Promise((resolve, reject) => {
+            const run = () => {
+                this.commandInFlight = true;
+                commandFn()
+                    .then((result) => {
+                    this.commandInFlight = false;
+                    resolve(result);
+                    this.dequeueNextCommand();
+                })
+                    .catch((err) => {
+                    this.commandInFlight = false;
+                    reject(err);
+                    this.dequeueNextCommand();
+                });
+            };
+            this.commandResponseQueue.push(run);
+            if (!this.commandInFlight) {
+                this.dequeueNextCommand();
             }
-        }
-        else if (this.commandQueue.length > 0) {
-            const commandsToSend = this.commandQueue.splice(0, COMMAND_BURST_AMOUNT);
-            for (const { command, data } of commandsToSend) {
-                this.socket.write((0, protocol_1.buildPacket)(command, data));
-            }
-        }
-        this.isProcessing = false;
-        if (this.commandQueue.length > 0 || this.faderLevelQueue.length > 0) {
-            setTimeout(() => this.processCommandQueue(), COMMAND_BURST_RATE_MS);
+        });
+    }
+    dequeueNextCommand() {
+        if (!this.commandInFlight && this.commandResponseQueue.length > 0) {
+            const next = this.commandResponseQueue.shift();
+            if (next)
+                next();
         }
     }
     sendCommand(command, data = Buffer.alloc(0), isFaderLevel = false) {
@@ -342,7 +371,7 @@ class CalrecClient extends node_events_1.EventEmitter {
                 resolve: resolve,
                 reject,
             });
-            // If it is a read command, set up the promise resolver
+            // If it is a read command, set up the promise resolver and timeout
             if ((command & 0x8000) === 0) {
                 let requestKey = `${command}`;
                 if (data.length >= 2) {
@@ -352,12 +381,14 @@ class CalrecClient extends node_events_1.EventEmitter {
                     resolve: resolve,
                     reject,
                 });
-                setTimeout(() => {
+                // Timeout handler for command response
+                const handleCommandTimeout = () => {
                     if (this.requestMap.has(requestKey)) {
                         this.requestMap.delete(requestKey);
-                        reject(new Error(`Request for command ${command.toString(16)} timed out.`));
+                        reject(new Error(`Request for command ${command.toString(16)} timed out after ${COMMAND_RESPONSE_TIMEOUT_MS}ms.`));
                     }
-                }, 5000);
+                };
+                setTimeout(handleCommandTimeout, COMMAND_RESPONSE_TIMEOUT_MS);
             }
             else {
                 // For write commands, resolve immediately
@@ -367,6 +398,59 @@ class CalrecClient extends node_events_1.EventEmitter {
                 this.processCommandQueue();
             }
         });
+    }
+    sendCommandWithQueue(command, data = Buffer.alloc(0), isFaderLevel = false) {
+        if ((command & 0x8000) === 0) {
+            return this.enqueueCommandWithResponse(() => this.sendCommand(command, data, isFaderLevel));
+        }
+        else {
+            return this.sendCommand(command, data, isFaderLevel);
+        }
+    }
+    async processCommandQueue() {
+        if (this.isProcessing ||
+            this.state.connectionState !== types_1.ConnectionState.CONNECTED)
+            return;
+        this.isProcessing = true;
+        if (!this.socket) {
+            this.isProcessing = false;
+            return;
+        }
+        const now = Date.now();
+        const timeSinceLastCommand = now - this.lastCommandSent;
+        if (timeSinceLastCommand < GLOBAL_COMMAND_RATE_MS) {
+            this.isProcessing = false;
+            setTimeout(() => this.processCommandQueue(), GLOBAL_COMMAND_RATE_MS - timeSinceLastCommand);
+            return;
+        }
+        if (this.faderLevelQueue.length > 0 &&
+            Date.now() - this.lastFaderLevelSent > FADER_LEVEL_RATE_MS) {
+            const nextFaderCommand = this.faderLevelQueue.shift();
+            if (nextFaderCommand) {
+                const { command, data } = nextFaderCommand;
+                const faderId = data.length >= 2 ? data.readUInt16BE(0) : undefined;
+                const commandName = Object.entries(protocol_1.COMMANDS).find(([k, v]) => v === command)?.[0] || command.toString(16);
+                console.debug(`[CalrecClient] Sending faderLevelQueue command: ${commandName} (0x${command.toString(16)})${faderId !== undefined ? ", faderId: " + faderId : ""}`);
+                this.socket.write((0, protocol_1.buildPacket)(command, data));
+                this.lastFaderLevelSent = Date.now();
+                this.lastCommandSent = Date.now();
+            }
+        }
+        else if (this.commandQueue.length > 0) {
+            const nextCommand = this.commandQueue.shift();
+            if (nextCommand) {
+                const { command, data } = nextCommand;
+                const faderId = data.length >= 2 ? data.readUInt16BE(0) : undefined;
+                const commandName = Object.entries(protocol_1.COMMANDS).find(([k, v]) => v === command)?.[0] || command.toString(16);
+                console.debug(`[CalrecClient] Sending commandQueue command: ${commandName} (0x${command.toString(16)})${faderId !== undefined ? ", faderId: " + faderId : ""}`);
+                this.socket.write((0, protocol_1.buildPacket)(command, data));
+                this.lastCommandSent = Date.now();
+            }
+        }
+        this.isProcessing = false;
+        if (this.commandQueue.length > 0 || this.faderLevelQueue.length > 0) {
+            setTimeout(() => this.processCommandQueue(), GLOBAL_COMMAND_RATE_MS);
+        }
     }
     // --- PUBLIC API METHODS ---
     async getConsoleInfoInternal() {
@@ -407,7 +491,13 @@ class CalrecClient extends node_events_1.EventEmitter {
         this.ensureConnected();
         const data = Buffer.alloc(2);
         data.writeUInt16BE(faderId, 0);
-        return this.sendCommand(protocol_1.COMMANDS.READ_FADER_LABEL, data);
+        return this.sendCommandWithQueue(protocol_1.COMMANDS.READ_FADER_LABEL, data)
+            .then((label) => {
+            if (typeof label === "object" && label !== null && Buffer.isBuffer(label)) {
+                return label.slice(2).toString("ascii");
+            }
+            return typeof label === "string" ? label : String(label);
+        });
     }
     setAuxRouting(auxId, routes) {
         this.ensureConnected();
@@ -427,6 +517,89 @@ class CalrecClient extends node_events_1.EventEmitter {
             data[2 + byteIndex] = byte;
         }
         return this.sendCommand(protocol_1.COMMANDS.WRITE_AUX_SEND_ROUTING, data);
+    }
+    setFaderPfl(faderId, isPfl) {
+        this.ensureConnected();
+        const data = Buffer.alloc(3);
+        data.writeUInt16BE(faderId, 0);
+        data[2] = isPfl ? 1 : 0;
+        return this.sendCommand(protocol_1.COMMANDS.WRITE_FADER_PFL, data);
+    }
+    setMainFaderPfl(mainId, isPfl) {
+        this.ensureConnected();
+        const data = Buffer.alloc(3);
+        data.writeUInt16BE(mainId, 0);
+        data[2] = isPfl ? 1 : 0;
+        return this.sendCommand(protocol_1.COMMANDS.WRITE_MAIN_PFL, data);
+    }
+    setAuxOutputLevel(auxId, level) {
+        this.ensureConnected();
+        const data = Buffer.alloc(4);
+        data.writeUInt16BE(auxId, 0);
+        data.writeUInt16BE(Math.min(1023, Math.max(0, level)), 2);
+        return this.sendCommand(protocol_1.COMMANDS.WRITE_AUX_OUTPUT_LEVEL, data);
+    }
+    getAuxOutputLevel(auxId) {
+        this.ensureConnected();
+        const data = Buffer.alloc(2);
+        data.writeUInt16BE(auxId, 0);
+        return this.sendCommand(protocol_1.COMMANDS.READ_AUX_OUTPUT_LEVEL, data);
+    }
+    setRouteToMain(mainId, routes) {
+        this.ensureConnected();
+        if (routes.length > 192)
+            throw new Error("Maximum of 192 main routes allowed.");
+        const data = Buffer.alloc(26);
+        data[0] = mainId;
+        data[1] = 0;
+        for (let byteIndex = 0; byteIndex < 24; byteIndex++) {
+            let byte = 0;
+            for (let bitIndex = 0; bitIndex < 8; bitIndex++) {
+                const routeIndex = byteIndex * 8 + bitIndex;
+                if (routeIndex < routes.length && routes[routeIndex]) {
+                    byte |= 1 << bitIndex;
+                }
+            }
+            data[2 + byteIndex] = byte;
+        }
+        return this.sendCommand(protocol_1.COMMANDS.WRITE_ROUTE_TO_MAIN, data);
+    }
+    setStereoImage(faderId, image) {
+        this.ensureConnected();
+        const data = Buffer.alloc(4);
+        data.writeUInt16BE(faderId, 0);
+        data[2] = image.leftToBoth ? 1 : 0;
+        data[3] = image.rightToBoth ? 1 : 0;
+        return this.sendCommand(protocol_1.COMMANDS.WRITE_STEREO_IMAGE, data);
+    }
+    async getFaderAssignment(faderId) {
+        this.ensureConnected();
+        const data = Buffer.alloc(2);
+        data.writeUInt16BE(faderId, 0);
+        const result = await this.sendCommand(protocol_1.COMMANDS.READ_FADER_ASSIGNMENT, data);
+        // Assume result is a Buffer and parse fields accordingly
+        if (Buffer.isBuffer(result) && result.length >= 6) {
+            return {
+                faderId,
+                type: result[2],
+                width: result[3],
+                calrecId: result.readUInt16BE(4),
+            };
+        }
+        throw new Error("Invalid assignment data");
+    }
+    async getStereoImage(faderId) {
+        this.ensureConnected();
+        const data = Buffer.alloc(2);
+        data.writeUInt16BE(faderId, 0);
+        const result = await this.sendCommand(protocol_1.COMMANDS.READ_STEREO_IMAGE, data);
+        if (Buffer.isBuffer(result) && result.length >= 4) {
+            return {
+                leftToBoth: !!result[2],
+                rightToBoth: !!result[3],
+            };
+        }
+        throw new Error("Invalid stereo image data");
     }
     // --- DECIBEL CONVERSION METHODS ---
     /**

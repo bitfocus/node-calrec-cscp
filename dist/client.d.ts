@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { type CalrecClientEvents, type CalrecClientOptions, ConnectionState, type ConsoleInfo, type ClientState } from "./types";
+import { type CalrecClientEvents, type CalrecClientOptions, ConnectionState, type ConsoleInfo, type ClientState, type FaderAssignment, type StereoImage } from "./types";
 export declare class CalrecClient extends EventEmitter {
     private options;
     private socket;
@@ -10,7 +10,11 @@ export declare class CalrecClient extends EventEmitter {
     private faderLevelQueue;
     private isProcessing;
     private lastFaderLevelSent;
+    private lastCommandSent;
     private requestMap;
+    private commandResponseQueue;
+    private commandInFlight;
+    private maxFaderCount?;
     constructor(options: CalrecClientOptions);
     on<K extends keyof CalrecClientEvents>(event: K, listener: CalrecClientEvents[K]): this;
     once<K extends keyof CalrecClientEvents>(event: K, listener: CalrecClientEvents[K]): this;
@@ -32,8 +36,11 @@ export declare class CalrecClient extends EventEmitter {
     private processIncomingMessage;
     private parseResponseData;
     private emitUnsolicitedEvent;
-    private processCommandQueue;
+    private enqueueCommandWithResponse;
+    private dequeueNextCommand;
     private sendCommand;
+    private sendCommandWithQueue;
+    private processCommandQueue;
     private getConsoleInfoInternal;
     private getConsoleNameInternal;
     getConsoleInfo(): Promise<ConsoleInfo>;
@@ -43,6 +50,17 @@ export declare class CalrecClient extends EventEmitter {
     setFaderCut(faderId: number, isCut: boolean): Promise<void>;
     getFaderLabel(faderId: number): Promise<string>;
     setAuxRouting(auxId: number, routes: boolean[]): Promise<void>;
+    setFaderPfl(faderId: number, isPfl: boolean): Promise<void>;
+    setMainFaderPfl(mainId: number, isPfl: boolean): Promise<void>;
+    setAuxOutputLevel(auxId: number, level: number): Promise<void>;
+    getAuxOutputLevel(auxId: number): Promise<number>;
+    setRouteToMain(mainId: number, routes: boolean[]): Promise<void>;
+    setStereoImage(faderId: number, image: {
+        leftToBoth: boolean;
+        rightToBoth: boolean;
+    }): Promise<void>;
+    getFaderAssignment(faderId: number): Promise<FaderAssignment>;
+    getStereoImage(faderId: number): Promise<StereoImage>;
     /**
      * Sets a fader level using decibels (dB) instead of raw protocol levels.
      * Uses channel fader conversion curve.

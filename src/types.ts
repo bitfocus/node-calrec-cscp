@@ -36,6 +36,7 @@ export interface CalrecClientOptions {
 	 * @default 5000
 	 */
 	reconnectInterval?: number;
+	maxFaderCount?: number;
 }
 
 /**

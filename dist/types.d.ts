@@ -32,6 +32,7 @@ export interface CalrecClientOptions {
      * @default 5000
      */
     reconnectInterval?: number;
+    maxFaderCount?: number;
 }
 /**
  * Represents the structure of a parsed incoming message from the console.
