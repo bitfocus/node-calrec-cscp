@@ -29,6 +29,7 @@ export declare class CalrecClient extends EventEmitter {
     private commandInFlight;
     private maxFaderCount?;
     private settings;
+    private debug;
     constructor(options: CalrecClientOptions, settings?: CalrecClientSettings);
     /**
      * Update protocol timing/settings at runtime.
@@ -62,8 +63,6 @@ export declare class CalrecClient extends EventEmitter {
     private sendCommand;
     private sendCommandWithQueue;
     private processCommandQueue;
-    private getConsoleInfoInternal;
-    private getConsoleNameInternal;
     /**
      * Get the current state of the client.
      * @returns A copy of the current client state.
@@ -255,7 +254,7 @@ export declare class CalrecClient extends EventEmitter {
      */
     getMainFaderLevelDb(faderId: number): Promise<number>;
     /**
-     * Get the effective maximum fader count based on console info or manual override.
+     * Get the effective maximum fader count based on configuration.
      * @returns The maximum number of faders to use for validation and array sizing.
      */
     private getEffectiveMaxFaderCount;
@@ -266,24 +265,10 @@ export declare class CalrecClient extends EventEmitter {
      */
     getMaxFaderCount(): number;
     /**
-     * Wait for console info to be available, with optional timeout.
-     * This ensures that the dynamic fader count is based on actual console capabilities.
-     * @param timeoutMs Optional timeout in milliseconds (default: 5000ms)
-     * @returns Promise that resolves when console info is available or timeout is reached
-     */
-    waitForConsoleInfo(timeoutMs?: number): Promise<ConsoleInfo | null>;
-    /**
-     * Get the effective maximum fader count, ensuring console info is available first.
-     * This method will wait for console info if it's not already available.
-     * @param waitForConsoleInfo Whether to wait for console info if not available (default: false)
-     * @param timeoutMs Timeout for waiting for console info (default: 5000ms)
-     * @returns Promise resolving to the maximum number of faders
-     */
-    getMaxFaderCountAsync(waitForConsoleInfo?: boolean, timeoutMs?: number): Promise<number>;
-    /**
-     * Get the effective maximum main count based on console info.
+     * Get the effective maximum main count based on configuration.
      * @returns The maximum number of mains to use for validation and array sizing.
      */
     private getEffectiveMaxMainCount;
+    private debugWithTimestamp;
 }
 //# sourceMappingURL=client.d.ts.map

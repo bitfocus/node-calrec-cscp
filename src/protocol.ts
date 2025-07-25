@@ -114,6 +114,15 @@ export const COMMANDS = {
 	READ_FADER_LABEL: 0x000b,
 	READ_MAIN_PFL: 0x000c,
 	READ_MAIN_FADER_LABEL: 0x000d,
+	
+	// Additional commands that may be sent by the console (not fully documented)
+	READ_UNKNOWN_03: 0x0003,
+	READ_UNKNOWN_04: 0x0004,
+	READ_UNKNOWN_06: 0x0006,
+	READ_UNKNOWN_09: 0x0009,
+	READ_UNKNOWN_0A: 0x000a,
+	READ_UNKNOWN_0E: 0x000e,
+	READ_UNKNOWN_0F: 0x000f,
 
 	// Read Commands - Version 20+ (Auxiliary send routing extensions)
 	READ_AVAILABLE_AUX: 0x0010,

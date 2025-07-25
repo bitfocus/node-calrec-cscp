@@ -39,6 +39,13 @@ export declare const COMMANDS: {
     readonly READ_FADER_LABEL: 11;
     readonly READ_MAIN_PFL: 12;
     readonly READ_MAIN_FADER_LABEL: 13;
+    readonly READ_UNKNOWN_03: 3;
+    readonly READ_UNKNOWN_04: 4;
+    readonly READ_UNKNOWN_06: 6;
+    readonly READ_UNKNOWN_09: 9;
+    readonly READ_UNKNOWN_0A: 10;
+    readonly READ_UNKNOWN_0E: 14;
+    readonly READ_UNKNOWN_0F: 15;
     readonly READ_AVAILABLE_AUX: 16;
     readonly READ_FADER_ASSIGNMENT: 17;
     readonly READ_AUX_SEND_ROUTING: 18;

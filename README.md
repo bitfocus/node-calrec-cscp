@@ -32,7 +32,9 @@ import { CalrecClient } from '@bitfocusas/calrec-cscp';
 const client = new CalrecClient(
   {
     host: '192.168.1.100', // Your Calrec console IP
-    port: 1337,            // Your configured TCP port
+    port: 3322,            // Your configured TCP port
+    maxFaderCount: 42,     // Maximum number of faders (1-192)
+    maxMainCount: 3,       // Maximum number of main outputs (optional, default: 3)
     autoReconnect: true,
     reconnectInterval: 5000,
   },
@@ -75,15 +77,25 @@ import { CalrecClient } from '@bitfocusas/calrec-cscp';
 
 const client = new CalrecClient({
   host: '192.168.1.100',
-  port: 1337,
+  port: 3322,
+  maxFaderCount: 42, // Maximum number of faders (1-192)
+  maxMainCount: 3,   // Maximum number of main outputs (optional, default: 3)
 });
 
 client.on('ready', async () => {
   try {
-    // Get console information
-    const consoleInfo = await client.getConsoleInfo();
-    console.log('Console:', consoleInfo.deskLabel);
-    console.log('Max faders:', consoleInfo.maxFaders);
+    // Get console information (optional - console may not respond)
+    try {
+      const consoleInfo = await client.getConsoleInfo();
+      console.log('Console:', consoleInfo.deskLabel);
+      console.log('Max faders:', consoleInfo.maxFaders);
+    } catch (error) {
+      console.log('Console info not available, using configured values');
+    }
+    
+    // Get configured fader count
+    const maxFaders = client.getMaxFaderCount();
+    console.log('Configured max faders:', maxFaders);
     
     // Set fader level (0-1023 range)
     await client.setFaderLevel(1, 500);
@@ -389,7 +401,7 @@ The library allows you to configure protocol timing for optimal performance:
 
 ```typescript
 const client = new CalrecClient(
-  { host: '192.168.1.100', port: 1337 },
+  { host: '192.168.1.100', port: 3322 },
   {
     globalCommandRateMs: 10,      // Minimum ms between any command
     faderLevelRateMs: 100,        // Minimum ms between fader level commands
@@ -406,7 +418,7 @@ client.updateSettings({
 ### Network Requirements
 
 - TCP/IP connectivity to the console
-- Port access (typically 1337, but configurable)
+- Port access (typically 3322, but configurable)
 - Stable network connection for reliable operation
 
 ## Error Handling

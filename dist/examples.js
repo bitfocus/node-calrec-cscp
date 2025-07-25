@@ -43,22 +43,20 @@ Usage: npm run examples [options]
 
 Options:
   -h, --help           Show this help message
-  -l, --level LEVEL    Run examples for specific protocol level (v1, v20, v21, dynamic, all)
+  -l, --level LEVEL    Run examples for specific protocol level (v1, v20, v21, all)
   --host HOST          Console IP address (default: 172.27.27.218)
-  --port PORT          Console TCP port (default: 1337)
+  --port PORT          Console TCP port (default: 3322)
 
 Protocol Levels:
   v1                   Basic commands (all consoles)
   v20                  V1 + Auxiliary send routing extensions
   v21                  V20 + Channel/Group routing to mains extensions
-  dynamic              Dynamic fader count demonstration
   all                  Run all examples (default)
 
 Examples:
   npm run examples -- --level v1
   npm run examples -- --level v20 --host 192.168.1.100
   npm run examples -- --level v21 --host 10.0.0.50 --port 1338
-  npm run examples -- --level dynamic --host 192.168.1.100
 `);
 }
 // Create a client instance with custom settings
@@ -66,6 +64,8 @@ function createClient(host, port) {
     return new index_1.CalrecClient({
         host,
         port,
+        maxFaderCount: 42, // Configure for 42 faders
+        maxMainCount: 3, // Configure for 3 mains
         autoReconnect: true,
         reconnectInterval: 5000,
     }, {
@@ -141,11 +141,19 @@ function setupEventListeners(client) {
     client.on("mainPflChange", (mainId, isPfl) => {
         logWithTimestamp(`Main ${mainId} PFL: ${isPfl ? "ON" : "OFF"}`);
     });
-    // Only log unsolicited messages for truly unknown commands
+    // Only log unsolicited messages for truly unknown commands (reduce verbosity)
+    let unknownCommandCount = 0;
     client.on("unsolicitedMessage", (message) => {
         const commandName = Object.entries(protocol_1.COMMANDS).find(([k, v]) => v === message.command)?.[0];
         if (!commandName) {
-            logWithTimestamp(`Unknown unsolicited message: Command 0x${message.command.toString(16)}, Data: ${message.data.toString("hex")}`);
+            // Only log the first few unknown commands to avoid spam
+            unknownCommandCount++;
+            if (unknownCommandCount <= 3) {
+                logWithTimestamp(`Unknown unsolicited message: Command 0x${message.command.toString(16)}, Data: ${message.data.toString("hex")}`);
+            }
+            else if (unknownCommandCount === 4) {
+                logWithTimestamp(`... (suppressing further unknown command logs)`);
+            }
         }
     });
 }
@@ -153,21 +161,48 @@ function setupEventListeners(client) {
 async function runLevel1Examples(client) {
     logWithTimestamp("=== Running Protocol Level 1 Examples ===");
     try {
+        // Add timeout wrapper for each command
+        const timeoutWrapper = (promise, timeoutMs = 3000) => {
+            return Promise.race([
+                promise,
+                new Promise((_, reject) => setTimeout(() => reject(new Error(`Command timed out after ${timeoutMs}ms`)), timeoutMs))
+            ]);
+        };
         // Console Information
         logWithTimestamp("Getting console information...");
-        const consoleInfo = await client.getConsoleInfo();
-        logWithTimestamp("Console Info:", consoleInfo);
+        try {
+            const consoleInfo = await timeoutWrapper(client.getConsoleInfo());
+            logWithTimestamp("Console Info:", consoleInfo);
+        }
+        catch (error) {
+            logWithTimestamp("Failed to get console info:", error);
+        }
         logWithTimestamp("Getting console name...");
-        const consoleName = await client.getConsoleName();
-        logWithTimestamp("Console Name:", consoleName);
+        try {
+            const consoleName = await timeoutWrapper(client.getConsoleName());
+            logWithTimestamp("Console Name:", consoleName);
+        }
+        catch (error) {
+            logWithTimestamp("Failed to get console name:", error);
+        }
         // Fader Level Control
         logWithTimestamp("Setting fader 1 to -20dB...");
-        await client.setFaderLevelDb(1, -20);
-        logWithTimestamp("Set fader 1 to -20dB");
+        try {
+            await timeoutWrapper(client.setFaderLevelDb(1, -20));
+            logWithTimestamp("Set fader 1 to -20dB");
+        }
+        catch (error) {
+            logWithTimestamp("Failed to set fader level:", error);
+        }
         logWithTimestamp("Getting fader 1 level...");
-        const faderLevel = await client.getFaderLevel(1);
-        const faderLevelDb = (0, index_1.channelLevelToDb)(faderLevel);
-        logWithTimestamp(`Fader 1: Level ${faderLevel}, ${faderLevelDb.toFixed(1)}dB`);
+        try {
+            const faderLevel = await timeoutWrapper(client.getFaderLevel(1));
+            const faderLevelDb = (0, index_1.channelLevelToDb)(faderLevel);
+            logWithTimestamp(`Fader 1: Level ${faderLevel}, ${faderLevelDb.toFixed(1)}dB`);
+        }
+        catch (error) {
+            logWithTimestamp("Failed to get fader level:", error);
+        }
         // Fader Cut Control
         logWithTimestamp("Cutting fader 1...");
         await client.setFaderCut(1, true);
@@ -275,67 +310,6 @@ async function runLevel21Examples(client) {
         logWithTimestamp("Level 21 example failed:", error);
     }
 }
-// Dynamic Fader Count Example
-async function runDynamicFaderCountExample(client) {
-    logWithTimestamp("=== Running Dynamic Fader Count Example ===");
-    try {
-        // Get console info to see the actual fader count
-        logWithTimestamp("Getting console info...");
-        const consoleInfo = await client.getConsoleInfo();
-        logWithTimestamp("Console info:", consoleInfo);
-        // Get the effective max fader count (synchronous - uses cached info)
-        const maxFaders = client.getMaxFaderCount();
-        logWithTimestamp(`Effective max fader count (sync): ${maxFaders}`);
-        // Get the effective max fader count (async - can wait for console info)
-        const maxFadersAsync = await client.getMaxFaderCountAsync(true, 5000);
-        logWithTimestamp(`Effective max fader count (async): ${maxFadersAsync}`);
-        // Wait for console info to be available (if not already)
-        logWithTimestamp("Waiting for console info to be available...");
-        const waitedConsoleInfo = await client.waitForConsoleInfo(5000);
-        if (waitedConsoleInfo) {
-            logWithTimestamp("Console info is now available:", waitedConsoleInfo);
-        }
-        else {
-            logWithTimestamp("Console info not available after timeout, using defaults");
-        }
-        // Demonstrate that routing arrays are sized correctly
-        logWithTimestamp("Creating routing arrays with dynamic sizing...");
-        // Aux routing example
-        const auxRoutes = new Array(maxFaders).fill(false);
-        auxRoutes[0] = true; // Route fader 1 to aux 1
-        auxRoutes[Math.min(5, maxFaders - 1)] = true; // Route fader 6 (or last available) to aux 1
-        logWithTimestamp(`Created aux routing array with ${auxRoutes.length} elements`);
-        // Main routing example
-        const mainRoutes = new Array(maxFaders).fill(false);
-        mainRoutes[1] = true; // Route fader 2 to main 1
-        mainRoutes[Math.min(10, maxFaders - 1)] = true; // Route fader 11 (or last available) to main 1
-        logWithTimestamp(`Created main routing array with ${mainRoutes.length} elements`);
-        // Test validation with the actual max fader count
-        logWithTimestamp("Testing fader ID validation...");
-        try {
-            await client.getFaderLevel(maxFaders); // This should work
-            logWithTimestamp(`Successfully accessed fader ${maxFaders}`);
-        }
-        catch (error) {
-            logWithTimestamp(`Failed to access fader ${maxFaders}:`, error);
-        }
-        try {
-            await client.getFaderLevel(maxFaders + 1); // This should fail
-            logWithTimestamp(`Unexpectedly succeeded accessing fader ${maxFaders + 1}`);
-        }
-        catch (error) {
-            logWithTimestamp(`Correctly rejected fader ${maxFaders + 1}:`, error);
-        }
-        // Show the difference between sync and async methods
-        logWithTimestamp("=== Comparison of sync vs async methods ===");
-        logWithTimestamp(`Sync getMaxFaderCount(): ${client.getMaxFaderCount()}`);
-        logWithTimestamp(`Async getMaxFaderCountAsync(): ${await client.getMaxFaderCountAsync()}`);
-        logWithTimestamp(`Async getMaxFaderCountAsync(waitForConsoleInfo: true): ${await client.getMaxFaderCountAsync(true)}`);
-    }
-    catch (error) {
-        logWithTimestamp("Dynamic fader count example failed:", error);
-    }
-}
 // Main execution function
 async function main() {
     const options = parseArgs();
@@ -344,7 +318,7 @@ async function main() {
         return;
     }
     const host = options.host || "172.27.27.218";
-    const port = options.port || 1337;
+    const port = options.port || 3322;
     const level = options.level || "all";
     logWithTimestamp(`Starting Calrec CSCP examples (Level: ${level}, Host: ${host}:${port})`);
     const client = createClient(host, port);
@@ -355,9 +329,9 @@ async function main() {
         await client.connect();
         // Wait for client to be ready
         await new Promise((resolve) => {
+            console.log("Waiting for client to be ready");
             client.once("ready", resolve);
-            // Timeout after 10 seconds
-            setTimeout(() => resolve(), 10000);
+            setTimeout(() => resolve(), 100);
         });
         // Run examples based on level
         switch (level.toLowerCase()) {
@@ -373,15 +347,11 @@ async function main() {
                 await runLevel20Examples(client);
                 await runLevel21Examples(client);
                 break;
-            case "dynamic":
-                await runDynamicFaderCountExample(client);
-                break;
             case "all":
             default:
                 await runLevel1Examples(client);
                 await runLevel20Examples(client);
                 await runLevel21Examples(client);
-                await runDynamicFaderCountExample(client);
                 break;
         }
         logWithTimestamp("✅ All examples completed successfully!");
@@ -392,12 +362,13 @@ async function main() {
     finally {
         // Cleanup
         logWithTimestamp("🧹 Cleaning up...");
-        await client.disconnect();
+        //await client.disconnect();
         logWithTimestamp("Cleanup complete");
         // Exit after a short delay
         /*setTimeout(() => {
             logWithTimestamp("Exiting...");
-            process.exit(0);
+            //process.exit(0);
+        
         }, 1000);*/
     }
 }

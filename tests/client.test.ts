@@ -930,12 +930,11 @@ describe("CalrecClient Integration Tests", () => {
 	});
 
 	describe("Dynamic Fader Count", () => {
-		test("should return correct max fader count", () => {
-			// Test with no console info (should use default or manual override)
+		test("should provide synchronous methods for max fader count", () => {
 			const maxFaders = client.getMaxFaderCount();
 			expect(typeof maxFaders).toBe("number");
 			expect(maxFaders).toBeGreaterThan(0);
-			expect(maxFaders).toBeLessThanOrEqual(192); // Should not exceed 192
+			expect(maxFaders).toBeLessThanOrEqual(192);
 		});
 
 		test("should validate fader IDs correctly", async () => {
@@ -975,35 +974,6 @@ describe("CalrecClient Integration Tests", () => {
 			// Test main routing array
 			const mainRoutes = new Array(maxFaders).fill(false);
 			expect(mainRoutes.length).toBe(maxFaders);
-		});
-
-		test("should provide async methods for max fader count", async () => {
-			// Test the async method without waiting
-			const maxFadersAsync = await client.getMaxFaderCountAsync();
-			expect(typeof maxFadersAsync).toBe("number");
-			expect(maxFadersAsync).toBeGreaterThan(0);
-			expect(maxFadersAsync).toBeLessThanOrEqual(192);
-
-			// Test the async method with waiting (should timeout if not connected)
-			try {
-				const maxFadersAsyncWait = await client.getMaxFaderCountAsync(true, 1000);
-				expect(typeof maxFadersAsyncWait).toBe("number");
-			} catch (error) {
-				// Expected if not connected
-				expect(error).toBeDefined();
-			}
-		});
-
-		test("should wait for console info", async () => {
-			// Test waitForConsoleInfo method
-			try {
-				const consoleInfo = await client.waitForConsoleInfo(1000);
-				// If we get here, either console info is available or timeout occurred
-				expect(consoleInfo === null || typeof consoleInfo === "object").toBe(true);
-			} catch (error) {
-				// Expected if not connected
-				expect(error).toBeDefined();
-			}
 		});
 	});
 });

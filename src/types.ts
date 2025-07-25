@@ -48,9 +48,25 @@ export interface CalrecClientOptions {
 	reconnectInterval?: number;
 	/**
 	 * Maximum number of faders to expect from the console.
-	 * Used for validation and optimization.
+	 * Used for validation and optimization. Must be between 1 and 192.
 	 */
-	maxFaderCount?: number;
+	maxFaderCount: number;
+	/**
+	 * Maximum number of main outputs to expect from the console.
+	 * Used for validation and optimization.
+	 * @default 3
+	 */
+	maxMainCount?: number;
+	/**
+	 * Timeout in milliseconds for waiting for console info during initialization.
+	 * @default 10000
+	 */
+	consoleInfoTimeoutMs?: number;
+	/**
+	 * Whether to enable debug logging.
+	 * @default false
+	 */
+	debug?: boolean;
 }
 
 /**

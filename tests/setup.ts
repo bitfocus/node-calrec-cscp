@@ -13,7 +13,9 @@ afterAll(() => {
 // Test utilities
 export const TEST_CONFIG = {
 	host: "172.27.27.218",
-	port: 1337,
+	port: 3322,
+	maxFaderCount: 42, // Configure for 42 faders
+	maxMainCount: 3,   // Configure for 3 mains
 	testFaderId: 1, // Use fader 1 for testing
 	testAuxId: 1, // Use aux 1 for testing
 	testMainId: 1, // Use main 1 for testing

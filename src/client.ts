@@ -47,7 +47,7 @@ const DEFAULT_SETTINGS: Required<CalrecClientSettings> = {
 	globalCommandRateMs: 10,
 	faderLevelRateMs: 100,
 	commandResponseTimeoutMs: 500,
-	initializationTimeoutMs: 100,
+	initializationTimeoutMs: 200,
 };
 
 function parseNakError(errorCode: number): string {
@@ -96,20 +96,28 @@ export class CalrecClient extends EventEmitter {
 	private commandInFlight: boolean = false;
 	private maxFaderCount?: number;
 	private settings: Required<CalrecClientSettings>;
+	private debug: boolean;
 
 	constructor(
 		options: CalrecClientOptions,
 		settings: CalrecClientSettings = {},
 	) {
 		super();
-		const { maxFaderCount, ...rest } = options;
+		
+		// Validate maxFaderCount
+		if (options.maxFaderCount < 1 || options.maxFaderCount > 192) {
+			throw new Error(`maxFaderCount must be between 1 and 192, got ${options.maxFaderCount}`);
+		}
+		
 		this.options = {
 			autoReconnect: true,
 			reconnectInterval: 5000,
-			...rest,
+			maxMainCount: 3, // Default to 3 mains
+			debug: false,
+			...options,
 		};
-		this.maxFaderCount = maxFaderCount;
 		this.settings = { ...DEFAULT_SETTINGS, ...settings };
+		this.debug = this.options.debug || false;
 		this.setState({ connectionState: ConnectionState.DISCONNECTED });
 	}
 
@@ -160,7 +168,7 @@ export class CalrecClient extends EventEmitter {
 			this.socket ||
 			this.state.connectionState === ConnectionState.CONNECTING
 		) {
-			console.debug(
+			this.debugWithTimestamp(
 				`[CalrecClient] Connect called but already ${this.state.connectionState === ConnectionState.CONNECTING ? "connecting" : "connected"}`,
 			);
 			return;
@@ -178,16 +186,18 @@ export class CalrecClient extends EventEmitter {
 		});
 
 		this.socket = new net.Socket();
+		console.log("Socket created");
 		await new Promise<void>((resolve, reject) => {
 			this.socket?.once("error", (err) => {
-				console.debug(`[CalrecClient] Socket connection error: ${err.message}`);
+				this.debugWithTimestamp(`[CalrecClient] Socket connection error: ${err.message}`);
 				reject(err);
 			});
 			this.socket?.connect(this.options.port, this.options.host, () => {
 				this.socket?.off("error", reject);
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Socket connected to ${this.options.host}:${this.options.port}`,
 				);
+				console.log("Socket connected");
 				resolve();
 			});
 		});
@@ -195,42 +205,24 @@ export class CalrecClient extends EventEmitter {
 		this.setState({ connectionState: ConnectionState.CONNECTED });
 		this.emit("connect");
 
-		setTimeout(() => this.processCommandQueue(), 1000);
+		// Start command queue processing immediately
+		console.log("Starting command queue processing");
+		this.processCommandQueue();
 
-		try {
-			// Wait for console info with retries
-			console.debug(`[CalrecClient] Requesting console info with retries...`);
-			
-			const consoleInfo = await this.getConsoleInfoWithRetries();
-
-			if (consoleInfo) {
-				console.debug(`[CalrecClient] Received console info:`, consoleInfo);
-				this.setState({ consoleInfo });
-			} else {
-				console.debug(
-					`[CalrecClient] No console info received after retries, using defaults`,
-				);
-			}
-
-			// Continue with initialization
-			console.debug(`[CalrecClient] Console initialized`);
-			this.emit("ready");
-		} catch (error) {
-			console.debug(`[CalrecClient] Failed to initialize console: ${error}`);
-			this.setState({ connectionState: ConnectionState.ERROR });
-			this.emit("error", error as Error);
-			throw error;
-		}
-
+		console.log("Setting up socket event handlers");
+		// Set up socket event handlers
 		this.socket.on("data", this.handleData.bind(this));
 		this.socket.on("close", this.handleDisconnect.bind(this));
 		this.socket.on("error", (err) => {
-			console.debug(
+			this.debugWithTimestamp(
 				`[CalrecClient] Socket error after connection: ${err.message}`,
 			);
 			this.setState({ connectionState: ConnectionState.ERROR });
 			this.emit("error", err);
 		});
+		console.log("Emitting ready event");
+		// Emit ready event immediately since we don't need console info
+		this.emit("ready");
 	}
 
 	private handleDisconnect(): void {
@@ -269,19 +261,23 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	private handleData(chunk: Buffer): void {
+		this.debugWithTimestamp(
+			`[CalrecClient] <<< RX HEX: ${chunk.toString("hex").toUpperCase()}`,
+		);
+		
 		this.dataBuffer = Buffer.concat([this.dataBuffer, chunk]);
 
 		// Debug: Log incoming data for troubleshooting
 		if (this.dataBuffer.length > 0 && this.dataBuffer.length < 100) {
-			console.debug(
+			/*this.debugWithTimestamp(
 				`[CalrecClient] Buffer: ${this.dataBuffer.toString("hex")}`,
-			);
+			);*/
 		}
 
 		// Process ACK/NAK messages first
 		if (this.dataBuffer.length > 0) {
 			if (this.dataBuffer[0] === ACK) {
-				console.debug(`[CalrecClient] Received ACK`);
+				this.debugWithTimestamp(`[CalrecClient] <<< RX: ACK (0x06)`);
 				this.dataBuffer = this.dataBuffer.slice(1);
 				return;
 			}
@@ -289,8 +285,8 @@ export class CalrecClient extends EventEmitter {
 				if (this.dataBuffer.length > 1) {
 					const errorCode = this.dataBuffer[1];
 					const errorMessage = parseNakError(errorCode);
-					console.debug(
-						`[CalrecClient] Received NAK: ${errorMessage} (code: ${errorCode})`,
+					this.debugWithTimestamp(
+						`[CalrecClient] <<< RX: NAK (0x15) - ${errorMessage} (code: ${errorCode})`,
 					);
 
 					// Try to reject the matching pending request
@@ -302,7 +298,7 @@ export class CalrecClient extends EventEmitter {
 						break; // Only reject one per NAK
 					}
 					if (!matched) {
-						console.debug(
+						this.debugWithTimestamp(
 							`[CalrecClient] NAK without pending request: ${errorMessage}`,
 						);
 					}
@@ -310,8 +306,8 @@ export class CalrecClient extends EventEmitter {
 					return;
 				}
 				// Debug: NAK without error code
-				console.debug(
-					`[CalrecClient] Received NAK without error code. Buffer: ${this.dataBuffer.toString("hex")}`,
+				this.debugWithTimestamp(
+					`[CalrecClient] <<< RX: NAK (0x15) without error code. Buffer: ${this.dataBuffer.toString("hex").toUpperCase()}`,
 				);
 				this.dataBuffer = this.dataBuffer.slice(1);
 				return;
@@ -325,13 +321,13 @@ export class CalrecClient extends EventEmitter {
 				// No SOH found, wait for more data
 				// But if we have a lot of data without SOH, something might be wrong
 				if (this.dataBuffer.length > 100) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] No SOH found in buffer after 100+ bytes. Buffer: ${this.dataBuffer.toString("hex")}`,
 					);
 					// Try to find any potential packet start
 					const potentialStart = this.dataBuffer.indexOf(0xf1);
 					if (potentialStart !== -1) {
-						console.debug(
+						this.debugWithTimestamp(
 							`[CalrecClient] Found potential start at ${potentialStart}: 0xf1`,
 						);
 					}
@@ -341,7 +337,7 @@ export class CalrecClient extends EventEmitter {
 
 			// Remove any data before SOH
 			if (sohIndex > 0) {
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Data before SOH: ${this.dataBuffer.slice(0, sohIndex).toString("hex")}`,
 				);
 				this.dataBuffer = this.dataBuffer.slice(sohIndex);
@@ -358,8 +354,8 @@ export class CalrecClient extends EventEmitter {
 			const packetWithSoh = this.dataBuffer.slice(0, messageLength);
 			const messageBufferForParser = packetWithSoh.slice(1); // Remove SOH
 
-			console.debug(
-				`[CalrecClient] Processing packet: ${packetWithSoh.toString("hex")}`,
+			this.debugWithTimestamp(
+				`[CalrecClient] <<< RX: Processing packet HEX: ${packetWithSoh.toString("hex").toUpperCase()}`,
 			);
 
 			this.dataBuffer = this.dataBuffer.slice(messageLength);
@@ -367,7 +363,7 @@ export class CalrecClient extends EventEmitter {
 			const parsed = parsePacket(messageBufferForParser);
 
 			if (parsed instanceof Error) {
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Failed to parse packet: ${parsed.message}. Raw data: ${messageBufferForParser.toString("hex")}`,
 				);
 				this.emit("error", parsed);
@@ -421,10 +417,10 @@ export class CalrecClient extends EventEmitter {
 			case COMMANDS.READ_CONSOLE_NAME:
 				try {
 					const name = data.toString("ascii").trim();
-					console.debug(`[CalrecClient] Parsed console name: "${name}"`);
+					this.debugWithTimestamp(`[CalrecClient] Parsed console name: "${name}"`);
 					return name || "Unknown";
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse console name: ${error}, data: ${data.toString("hex")}`,
 					);
 					return "Unknown";
@@ -435,18 +431,18 @@ export class CalrecClient extends EventEmitter {
 			case COMMANDS.READ_CONSOLE_INFO:
 				// Data for console info doesn't start with the ID, so we parse from the beginning
 				try {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Parsing console info data: ${data.toString("hex")}, length: ${data.length}`,
 					);
 
 					if (data.length < 20) {
-						console.debug(
+						this.debugWithTimestamp(
 							`[CalrecClient] Console info data too short: ${data.length} bytes, expected at least 20`,
 						);
 						return {
 							protocolVersion: 1, // Default to version 1
-							maxFaders: this.getEffectiveMaxFaderCount(), // Use effective max fader count
-							maxMains: this.getEffectiveMaxMainCount(), // Use effective max main count
+							maxFaders: this.getEffectiveMaxFaderCount(), // Use configured max fader count
+							maxMains: this.getEffectiveMaxMainCount(), // Use configured max main count
 							deskLabel: "Unknown",
 						} as ConsoleInfo;
 					}
@@ -456,7 +452,7 @@ export class CalrecClient extends EventEmitter {
 					const maxMains = data.readUInt16BE(4);
 					const deskLabel = data.slice(12, 20).toString("ascii").trim();
 
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Parsed console info: version=${protocolVersion}, faders=${maxFaders}, mains=${maxMains}, label="${deskLabel}"`,
 					);
 
@@ -467,7 +463,7 @@ export class CalrecClient extends EventEmitter {
 						deskLabel: deskLabel || "Unknown",
 					} as ConsoleInfo;
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse console info: ${error}, data: ${data.toString("hex")}`,
 					);
 					return {
@@ -482,7 +478,7 @@ export class CalrecClient extends EventEmitter {
 			case COMMANDS.READ_FADER_ASSIGNMENT:
 				try {
 					if (data.length < 6) {
-						console.debug(
+						this.debugWithTimestamp(
 							`[CalrecClient] Fader assignment data too short: ${data.length} bytes, expected at least 6`,
 						);
 						return {
@@ -498,7 +494,7 @@ export class CalrecClient extends EventEmitter {
 					const width = data[3];
 					const calrecId = data.readUInt16BE(4);
 
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Parsed fader assignment: faderId=${faderId}, type=${type}, width=${width}, calrecId=${calrecId}`,
 					);
 
@@ -509,7 +505,7 @@ export class CalrecClient extends EventEmitter {
 						calrecId,
 					} as FaderAssignment;
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse fader assignment: ${error}, data: ${data.toString("hex")}`,
 					);
 					return {
@@ -529,7 +525,7 @@ export class CalrecClient extends EventEmitter {
 					}
 					throw new Error("Stereo image data too short");
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse stereo image: ${error}, data: ${data.toString("hex")}`,
 					);
 					return {
@@ -551,7 +547,7 @@ export class CalrecClient extends EventEmitter {
 					}
 					return available;
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse available aux: ${error}, data: ${data.toString("hex")}`,
 					);
 					return new Array(32).fill(false);
@@ -564,7 +560,7 @@ export class CalrecClient extends EventEmitter {
 					}
 					return available;
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse available mains: ${error}, data: ${data.toString("hex")}`,
 					);
 					return new Array(16).fill(false);
@@ -588,7 +584,7 @@ export class CalrecClient extends EventEmitter {
 					}
 					return routes;
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse aux send routing: ${error}, data: ${data.toString("hex")}`,
 					);
 					return new Array(this.getEffectiveMaxFaderCount()).fill(false);
@@ -612,7 +608,7 @@ export class CalrecClient extends EventEmitter {
 					}
 					return routes;
 				} catch (error) {
-					console.debug(
+					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse route to main: ${error}, data: ${data.toString("hex")}`,
 					);
 					return new Array(this.getEffectiveMaxFaderCount()).fill(false);
@@ -630,7 +626,7 @@ export class CalrecClient extends EventEmitter {
 			case COMMANDS.WRITE_MAIN_PFL:
 				return data[2] === 1;
 			default:
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Unhandled response data for command: ${command.toString(16)}`,
 				);
 				return data;
@@ -638,91 +634,132 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	private emitUnsolicitedEvent(command: number, data: Buffer): void {
-		const id = data.length >= 2 ? data.readUInt16BE(0) : -1;
-		switch (command) {
-			case COMMANDS.WRITE_FADER_LEVEL:
-				this.emit("faderLevelChange", id, data.readUInt16BE(2));
-				break;
-			case COMMANDS.WRITE_FADER_CUT:
-				this.emit("faderCutChange", id, data[2] === 0);
-				break;
-			case COMMANDS.WRITE_FADER_PFL:
-				this.emit("faderPflChange", id, data[2] === 1);
-				break;
-			case COMMANDS.WRITE_MAIN_FADER_LEVEL:
-				this.emit("mainLevelChange", id, data.readUInt16BE(2));
-				break;
-			case COMMANDS.WRITE_MAIN_PFL:
-				this.emit("mainPflChange", id, data[2] === 1);
-				break;
-			case COMMANDS.WRITE_AUX_OUTPUT_LEVEL:
-				this.emit("auxOutputLevelChange", id, data.readUInt16BE(2));
-				break;
-			case COMMANDS.WRITE_AUX_SEND_ROUTING: {
-				// For routing commands, the ID is in the first byte, not first two bytes
-				const auxId = data[0];
-				this.emit(
-					"auxRoutingChange",
-					auxId,
-					this.parseRoutingData(data.slice(2)),
-				);
-				break;
+		// Check if this is a write command (MSB set)
+		const isWriteCommand = (command & 0x8000) !== 0;
+		const baseCommand = command & 0x7fff;
+		
+		this.debugWithTimestamp(
+			`[CalrecClient] Processing unsolicited event: command=0x${command.toString(16)}, baseCommand=0x${baseCommand.toString(16)}, data=${data.toString("hex")}`,
+		);
+		
+		// Handle write commands that are unsolicited responses
+		if (isWriteCommand) {
+			// These are write command responses - process them as actual changes
+			switch (baseCommand) {
+				case COMMANDS.READ_FADER_LEVEL: // 0x0000 -> WRITE_FADER_LEVEL: 0x8000
+					if (data.length >= 4) {
+						const faderId = data.readUInt16BE(0);
+						const level = data.readUInt16BE(2);
+						this.debugWithTimestamp(`[CalrecClient] Emitting faderLevelChange: faderId=${faderId}, level=${level}`);
+						this.emit("faderLevelChange", faderId, level);
+					}
+					break;
+				case COMMANDS.READ_MAIN_FADER_LEVEL: // 0x0002 -> WRITE_MAIN_FADER_LEVEL: 0x8002
+					if (data.length >= 4) {
+						const mainId = data.readUInt16BE(0);
+						const level = data.readUInt16BE(2);
+						this.debugWithTimestamp(`[CalrecClient] Emitting mainLevelChange: mainId=${mainId}, level=${level}`);
+						this.emit("mainLevelChange", mainId, level);
+					}
+					break;
+				case COMMANDS.READ_FADER_CUT: // 0x0001 -> WRITE_FADER_CUT: 0x8001
+					if (data.length >= 3) {
+						const faderId = data.readUInt16BE(0);
+						const isCut = data[2] === 0; // 0 = cut, 1 = uncut
+						this.debugWithTimestamp(`[CalrecClient] Emitting faderCutChange: faderId=${faderId}, isCut=${isCut}`);
+						this.emit("faderCutChange", faderId, isCut);
+					}
+					break;
+				case COMMANDS.READ_FADER_PFL: // 0x0005 -> WRITE_FADER_PFL: 0x8005
+					if (data.length >= 3) {
+						const faderId = data.readUInt16BE(0);
+						const isPfl = data[2] === 1; // 1 = PFL on, 0 = PFL off
+						this.debugWithTimestamp(`[CalrecClient] Emitting faderPflChange: faderId=${faderId}, isPfl=${isPfl}`);
+						this.emit("faderPflChange", faderId, isPfl);
+					}
+					break;
+				case COMMANDS.READ_MAIN_PFL: // 0x000c -> WRITE_MAIN_PFL: 0x800c
+					if (data.length >= 3) {
+						const mainId = data.readUInt16BE(0);
+						const isPfl = data[2] === 1; // 1 = PFL on, 0 = PFL off
+						this.debugWithTimestamp(`[CalrecClient] Emitting mainPflChange: mainId=${mainId}, isPfl=${isPfl}`);
+						this.emit("mainPflChange", mainId, isPfl);
+					}
+					break;
+				case COMMANDS.READ_AUX_OUTPUT_LEVEL: // 0x0013 -> WRITE_AUX_OUTPUT_LEVEL: 0x8013
+					if (data.length >= 4) {
+						const auxId = data.readUInt16BE(0);
+						const level = data.readUInt16BE(2);
+						this.debugWithTimestamp(`[CalrecClient] Emitting auxOutputLevelChange: auxId=${auxId}, level=${level}`);
+						this.emit("auxOutputLevelChange", auxId, level);
+					}
+					break;
+				default:
+					// For other write commands, just emit as unsolicited message
+					this.emit("unsolicitedMessage", { command, data });
+					break;
 			}
-			case COMMANDS.WRITE_ROUTE_TO_MAIN: {
-				// For routing commands, the ID is in the first byte, not first two bytes
-				const mainId = data[0];
-				this.emit(
-					"mainRoutingChange",
-					mainId,
-					this.parseRoutingData(data.slice(2)),
-				);
-				break;
-			}
-			case COMMANDS.WRITE_STEREO_IMAGE:
-				this.emit("stereoImageChange", id, {
-					leftToBoth: !!data[2],
-					rightToBoth: !!data[3],
-				});
-				break;
-			case COMMANDS.READ_FADER_LABEL: {
-				const labelBuf = data.slice(2);
-				const labelStr = Buffer.isBuffer(labelBuf)
-					? labelBuf.toString("utf8")
-					: String(labelBuf);
-				this.emit("faderLabelChange", id, labelStr);
-				break;
-			}
-			case COMMANDS.READ_MAIN_FADER_LABEL: {
-				const labelBuf = data.slice(2);
-				const labelStr = Buffer.isBuffer(labelBuf)
-					? labelBuf.toString("utf8")
-					: String(labelBuf);
-				this.emit("mainLabelChange", id, labelStr);
-				break;
-			}
-			case COMMANDS.WRITE_FADER_ASSIGNMENT: {
-				const assignment = this.parseFaderAssignmentData(data);
-				this.emit("faderAssignmentChange", assignment);
-				break;
-			}
-			case COMMANDS.WRITE_AVAILABLE_AUX:
-				this.emit("availableAuxesChange", this.parseAvailableData(data));
-				break;
-			case COMMANDS.WRITE_AVAILABLE_MAINS:
-				this.emit("availableMainsChange", this.parseAvailableData(data));
-				break;
+			return;
+		}
+		
+		switch (baseCommand) {
 			case COMMANDS.READ_CONSOLE_NAME:
 			case COMMANDS.READ_CONSOLE_INFO:
-				// These are expected unsolicited messages but don't need specific event emission
+				// These are expected unsolicited messages - parse and cache them
+				if (baseCommand === COMMANDS.READ_CONSOLE_INFO) {
+					const consoleInfo = this.parseResponseData(baseCommand, data) as ConsoleInfo;
+					this.debugWithTimestamp(`[CalrecClient] Received unsolicited console info:`, consoleInfo);
+					this.setState({ consoleInfo });
+				} else if (baseCommand === COMMANDS.READ_CONSOLE_NAME) {
+					const consoleName = this.parseResponseData(baseCommand, data) as string;
+					this.debugWithTimestamp(`[CalrecClient] Received unsolicited console name:`, consoleName);
+					this.setState({ consoleName });
+				}
+				break;
+			case COMMANDS.READ_FADER_LABEL:
+				// Optionally parse and cache fader label if needed
+				// this.debugWithTimestamp(`[CalrecClient] Received unsolicited fader label:`, data);
+				break;
+			case COMMANDS.READ_MAIN_FADER_LEVEL:
+				// Handle unsolicited main fader level changes
+				this.debugWithTimestamp(`[CalrecClient] Processing READ_MAIN_FADER_LEVEL, data length: ${data.length}`);
+				if (data.length >= 4) {
+					const mainId = data.readUInt16BE(0);
+					const level = data.readUInt16BE(2);
+					this.debugWithTimestamp(`[CalrecClient] Emitting mainLevelChange: mainId=${mainId}, level=${level}`);
+					this.emit("mainLevelChange", mainId, level);
+				} else {
+					this.debugWithTimestamp(`[CalrecClient] READ_MAIN_FADER_LEVEL data too short: ${data.length} bytes`);
+				}
+				break;
+			case COMMANDS.READ_FADER_ASSIGNMENT:
+				// Handle unsolicited fader assignment changes
+				this.debugWithTimestamp(`[CalrecClient] Processing READ_FADER_ASSIGNMENT, data length: ${data.length}`);
+				if (data.length >= 6) {
+					const assignment = this.parseResponseData(baseCommand, data) as FaderAssignment;
+					this.debugWithTimestamp(`[CalrecClient] Emitting faderAssignmentChange:`, assignment);
+					this.emit("faderAssignmentChange", assignment);
+				} else {
+					this.debugWithTimestamp(`[CalrecClient] READ_FADER_ASSIGNMENT data too short: ${data.length} bytes`);
+				}
+				break;
+			case COMMANDS.READ_UNKNOWN_03:
+			case COMMANDS.READ_UNKNOWN_04:
+			case COMMANDS.READ_UNKNOWN_06:
+			case COMMANDS.READ_UNKNOWN_09:
+			case COMMANDS.READ_UNKNOWN_0A:
+			case COMMANDS.READ_UNKNOWN_0E:
+			case COMMANDS.READ_UNKNOWN_0F:
+				// These are known but undocumented commands - just emit without logging
+				this.emit("unsolicitedMessage", { command, data });
 				break;
 			default: {
-				// Only log truly unknown commands, not the ones we expect as unsolicited
 				const commandName =
-					Object.entries(COMMANDS).find(([k, v]) => v === command)?.[0] ||
-					`0x${command.toString(16)}`;
-
-				// Don't log debug messages for commands we expect as unsolicited
-				// Just emit the unsolicited message event
+					Object.entries(COMMANDS).find(([k, v]) => v === baseCommand)?.[0] ||
+					`0x${baseCommand.toString(16)}`;
+				this.debugWithTimestamp(
+					`Unknown unsolicited message: Command 0x${command.toString(16)}, Data: ${data.toString("hex")}`,
+				);
 				this.emit("unsolicitedMessage", { command, data });
 				break;
 			}
@@ -813,33 +850,16 @@ export class CalrecClient extends EventEmitter {
 	): Promise<T> {
 		return new Promise((resolve, reject) => {
 			if (this.state.connectionState !== ConnectionState.CONNECTED) {
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Cannot send command - not connected. State: ${this.state.connectionState}`,
 				);
 				return reject(new Error("Not connected to the console."));
 			}
 			if (!this.socket) {
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Cannot send command - no socket available`,
 				);
 				return reject(new Error("No socket available."));
-			}
-
-			// Check protocol version compatibility if we have console info
-			if (this.state.consoleInfo) {
-				const readCmd = command & 0x7fff;
-				if (
-					!isCommandSupported(readCmd, this.state.consoleInfo.protocolVersion)
-				) {
-					const commandName =
-						Object.entries(COMMANDS).find(([k, v]) => v === readCmd)?.[0] ||
-						`0x${readCmd.toString(16)}`;
-					return reject(
-						new Error(
-							`Command ${commandName} (0x${readCmd.toString(16)}) is not supported by protocol version ${this.state.consoleInfo.protocolVersion}`,
-						),
-					);
-				}
 			}
 
 			const queue = isFaderLevel ? this.faderLevelQueue : this.commandQueue;
@@ -865,7 +885,7 @@ export class CalrecClient extends EventEmitter {
 				const handleCommandTimeout = () => {
 					if (this.requestMap.has(requestKey)) {
 						this.requestMap.delete(requestKey);
-						console.debug(
+						this.debugWithTimestamp(
 							`[CalrecClient] Command timeout for ${requestKey} (${command.toString(16)})`,
 						);
 						reject(
@@ -910,11 +930,11 @@ export class CalrecClient extends EventEmitter {
 			this.state.connectionState !== ConnectionState.CONNECTED
 		) {
 			if (this.isProcessing) {
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Skipping command queue processing - already processing`,
 				);
 			} else {
-				console.debug(
+				this.debugWithTimestamp(
 					`[CalrecClient] Skipping command queue processing - not connected. State: ${this.state.connectionState}`,
 				);
 			}
@@ -923,7 +943,7 @@ export class CalrecClient extends EventEmitter {
 		this.isProcessing = true;
 
 		if (!this.socket) {
-			console.debug(
+			this.debugWithTimestamp(
 				`[CalrecClient] Cannot process command queue - no socket available`,
 			);
 			this.isProcessing = false;
@@ -952,10 +972,17 @@ export class CalrecClient extends EventEmitter {
 				const commandName =
 					Object.entries(COMMANDS).find(([k, v]) => v === command)?.[0] ||
 					command.toString(16);
-				console.debug(
-					`[CalrecClient] Sending faderLevelQueue command: ${commandName} (0x${command.toString(16)})${faderId !== undefined ? `, faderId: ${faderId}` : ""}`,
+				const packet = buildPacket(command, data);
+				this.debugWithTimestamp(
+					`[CalrecClient] >>> TX: ${commandName} (0x${command.toString(16)})${faderId !== undefined ? `, faderId: ${faderId}` : ""}`,
 				);
-				this.socket.write(buildPacket(command, data));
+				this.debugWithTimestamp(
+					`[CalrecClient] >>> TX HEX: ${packet.toString('hex').toUpperCase()}`,
+				);
+				this.debugWithTimestamp(
+					`[CalrecClient] >>> TX BYTES: [${Array.from(packet).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`,
+				);
+				this.socket.write(packet);
 				this.lastFaderLevelSent = Date.now();
 				this.lastCommandSent = Date.now();
 			}
@@ -967,10 +994,17 @@ export class CalrecClient extends EventEmitter {
 				const commandName =
 					Object.entries(COMMANDS).find(([k, v]) => v === command)?.[0] ||
 					command.toString(16);
-				console.debug(
-					`[CalrecClient] Sending commandQueue command: ${commandName} (0x${command.toString(16)})${faderId !== undefined ? `, faderId: ${faderId}` : ""}`,
+				const packet = buildPacket(command, data);
+				this.debugWithTimestamp(
+					`[CalrecClient] >>> TX: ${commandName} (0x${command.toString(16)})${faderId !== undefined ? `, faderId: ${faderId}` : ""}`,
 				);
-				this.socket.write(buildPacket(command, data));
+				this.debugWithTimestamp(
+					`[CalrecClient] >>> TX HEX: ${packet.toString('hex').toUpperCase()}`,
+				);
+				this.debugWithTimestamp(
+					`[CalrecClient] >>> TX BYTES: [${Array.from(packet).map(b => `0x${b.toString(16).padStart(2, '0')}`).join(', ')}]`,
+				);
+				this.socket.write(packet);
 				this.lastCommandSent = Date.now();
 			}
 		}
@@ -986,46 +1020,6 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	// --- PUBLIC API METHODS ---
-
-	private async getConsoleInfoInternal(): Promise<ConsoleInfo | null> {
-		try {
-			const result = await Promise.race([
-				this.sendCommand(COMMANDS.READ_CONSOLE_INFO),
-				new Promise<never>((_, reject) =>
-					setTimeout(
-						() => reject(new Error("Console info timeout")),
-						this.settings.initializationTimeoutMs,
-					),
-				),
-			]);
-			return result as ConsoleInfo;
-		} catch (error) {
-			console.debug(
-				`[CalrecClient] Console info request failed or timed out: ${error}`,
-			);
-			return null;
-		}
-	}
-
-	private async getConsoleNameInternal(): Promise<string | null> {
-		try {
-			const result = await Promise.race([
-				this.sendCommand(COMMANDS.READ_CONSOLE_NAME),
-				new Promise<never>((_, reject) =>
-					setTimeout(
-						() => reject(new Error("Console name timeout")),
-						this.settings.initializationTimeoutMs,
-					),
-				),
-			]);
-			return result as string;
-		} catch (error) {
-			console.debug(
-				`[CalrecClient] Console name request failed or timed out: ${error}`,
-			);
-			return null;
-		}
-	}
 
 	/**
 	 * Get the current state of the client.
@@ -1089,13 +1083,6 @@ export class CalrecClient extends EventEmitter {
 			);
 		}
 
-		// Check if we have console info and validate against max faders
-		if (this.state.consoleInfo && faderId > this.state.consoleInfo.maxFaders) {
-			throw new Error(
-				`Fader ID ${faderId} exceeds maximum faders (${this.state.consoleInfo.maxFaders}) for this console.`,
-			);
-		}
-
 		// Validate level
 		if (level < 0 || level > 1023) {
 			throw new Error(
@@ -1121,13 +1108,6 @@ export class CalrecClient extends EventEmitter {
 		if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
 			throw new Error(
 				`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`,
-			);
-		}
-
-		// Check if we have console info and validate against max faders
-		if (this.state.consoleInfo && faderId > this.state.consoleInfo.maxFaders) {
-			throw new Error(
-				`Fader ID ${faderId} exceeds maximum faders (${this.state.consoleInfo.maxFaders}) for this console.`,
 			);
 		}
 
@@ -1234,15 +1214,6 @@ export class CalrecClient extends EventEmitter {
 	public async getAvailableAux(): Promise<boolean[]> {
 		this.ensureConnected();
 
-		// Check if we have console info and validate protocol version
-		if (this.state.consoleInfo) {
-			if (this.state.consoleInfo.protocolVersion < 20) {
-				throw new Error(
-					`Available aux commands require protocol version 20 or higher. Console version: ${this.state.consoleInfo.protocolVersion}`,
-				);
-			}
-		}
-
 		const result = await this.sendCommand(COMMANDS.READ_AVAILABLE_AUX);
 		if (Array.isArray(result)) {
 			return result;
@@ -1264,15 +1235,6 @@ export class CalrecClient extends EventEmitter {
 	 */
 	public async getAvailableMains(): Promise<boolean[]> {
 		this.ensureConnected();
-
-		// Check if we have console info and validate protocol version
-		if (this.state.consoleInfo) {
-			if (this.state.consoleInfo.protocolVersion < 21) {
-				throw new Error(
-					`Available mains commands require protocol version 21 or higher. Console version: ${this.state.consoleInfo.protocolVersion}`,
-				);
-			}
-		}
 
 		const result = await this.sendCommand(COMMANDS.READ_AVAILABLE_MAINS);
 		if (Array.isArray(result)) {
@@ -1296,15 +1258,6 @@ export class CalrecClient extends EventEmitter {
 	 */
 	public async getAuxSendRouting(auxId: number): Promise<boolean[]> {
 		this.ensureConnected();
-
-		// Check if we have console info and validate protocol version
-		if (this.state.consoleInfo) {
-			if (this.state.consoleInfo.protocolVersion < 20) {
-				throw new Error(
-					`Aux send routing commands require protocol version 20 or higher. Console version: ${this.state.consoleInfo.protocolVersion}`,
-				);
-			}
-		}
 
 		const data = Buffer.alloc(2);
 		data.writeUInt16BE(auxId, 0);
@@ -1342,15 +1295,6 @@ export class CalrecClient extends EventEmitter {
 	 */
 	public async getRouteToMain(mainId: number): Promise<boolean[]> {
 		this.ensureConnected();
-
-		// Check if we have console info and validate protocol version
-		if (this.state.consoleInfo) {
-			if (this.state.consoleInfo.protocolVersion < 21) {
-				throw new Error(
-					`Route to main commands require protocol version 21 or higher. Console version: ${this.state.consoleInfo.protocolVersion}`,
-				);
-			}
-		}
 
 		const data = Buffer.alloc(2);
 		data.writeUInt16BE(mainId, 0);
@@ -1504,26 +1448,10 @@ export class CalrecClient extends EventEmitter {
 	): Promise<void> {
 		this.ensureConnected();
 
-		// Check if we have console info and validate protocol version
-		if (this.state.consoleInfo) {
-			if (this.state.consoleInfo.protocolVersion < 21) {
-				throw new Error(
-					`Stereo image commands require protocol version 21 or higher. Console version: ${this.state.consoleInfo.protocolVersion}`,
-				);
-			}
-		}
-
 		// Validate fader ID
 		if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
 			throw new Error(
 				`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`,
-			);
-		}
-
-		// Check if we have console info and validate against max faders
-		if (this.state.consoleInfo && faderId > this.state.consoleInfo.maxFaders) {
-			throw new Error(
-				`Fader ID ${faderId} exceeds maximum faders (${this.state.consoleInfo.maxFaders}) for this console.`,
 			);
 		}
 
@@ -1561,26 +1489,10 @@ export class CalrecClient extends EventEmitter {
 	public async getStereoImage(faderId: number): Promise<StereoImage> {
 		this.ensureConnected();
 
-		// Check if we have console info and validate protocol version
-		if (this.state.consoleInfo) {
-			if (this.state.consoleInfo.protocolVersion < 21) {
-				throw new Error(
-					`Stereo image commands require protocol version 21 or higher. Console version: ${this.state.consoleInfo.protocolVersion}`,
-				);
-			}
-		}
-
 		// Validate fader ID
 		if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
 			throw new Error(
 				`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`,
-			);
-		}
-
-		// Check if we have console info and validate against max faders
-		if (this.state.consoleInfo && faderId > this.state.consoleInfo.maxFaders) {
-			throw new Error(
-				`Fader ID ${faderId} exceeds maximum faders (${this.state.consoleInfo.maxFaders}) for this console.`,
 			);
 		}
 
@@ -1644,17 +1556,11 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	/**
-	 * Get the effective maximum fader count based on console info or manual override.
+	 * Get the effective maximum fader count based on configuration.
 	 * @returns The maximum number of faders to use for validation and array sizing.
 	 */
 	private getEffectiveMaxFaderCount(): number {
-		// If we have console info, use that as the authoritative source
-		if (this.state.consoleInfo) {
-			return this.state.consoleInfo.maxFaders;
-		}
-
-		// Otherwise, use the manually specified maxFaderCount or default to 42
-		return this.maxFaderCount || 42;
+		return this.options.maxFaderCount;
 	}
 
 	/**
@@ -1667,80 +1573,17 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	/**
-	 * Wait for console info to be available, with optional timeout.
-	 * This ensures that the dynamic fader count is based on actual console capabilities.
-	 * @param timeoutMs Optional timeout in milliseconds (default: 5000ms)
-	 * @returns Promise that resolves when console info is available or timeout is reached
-	 */
-	public async waitForConsoleInfo(
-		timeoutMs: number = 5000,
-	): Promise<ConsoleInfo | null> {
-		// If we already have console info, return it immediately
-		if (this.state.consoleInfo) {
-			return this.state.consoleInfo;
-		}
-
-		// If not connected, throw an error
-		if (this.state.connectionState !== ConnectionState.CONNECTED) {
-			throw new Error("Client is not connected. Call connect() first.");
-		}
-
-		// Wait for console info to become available
-		return new Promise<ConsoleInfo | null>((resolve) => {
-			const timeout = setTimeout(() => {
-				console.debug(
-					`[CalrecClient] waitForConsoleInfo timeout after ${timeoutMs}ms`,
-				);
-				resolve(null);
-			}, timeoutMs);
-
-			// Check if console info becomes available
-			const checkConsoleInfo = () => {
-				if (this.state.consoleInfo) {
-					clearTimeout(timeout);
-					resolve(this.state.consoleInfo);
-				} else {
-					// Check again in 100ms
-					setTimeout(checkConsoleInfo, 100);
-				}
-			};
-
-			checkConsoleInfo();
-		});
-	}
-
-	/**
-	 * Get the effective maximum fader count, ensuring console info is available first.
-	 * This method will wait for console info if it's not already available.
-	 * @param waitForConsoleInfo Whether to wait for console info if not available (default: false)
-	 * @param timeoutMs Timeout for waiting for console info (default: 5000ms)
-	 * @returns Promise resolving to the maximum number of faders
-	 */
-	public async getMaxFaderCountAsync(
-		waitForConsoleInfo: boolean = false,
-		timeoutMs: number = 5000,
-	): Promise<number> {
-		if (waitForConsoleInfo && !this.state.consoleInfo) {
-			const consoleInfo = await this.waitForConsoleInfo(timeoutMs);
-			if (consoleInfo) {
-				return consoleInfo.maxFaders;
-			}
-		}
-
-		return this.getEffectiveMaxFaderCount();
-	}
-
-	/**
-	 * Get the effective maximum main count based on console info.
+	 * Get the effective maximum main count based on configuration.
 	 * @returns The maximum number of mains to use for validation and array sizing.
 	 */
 	private getEffectiveMaxMainCount(): number {
-		// If we have console info, use that as the authoritative source
-		if (this.state.consoleInfo) {
-			return this.state.consoleInfo.maxMains;
-		}
+		return this.options.maxMainCount || 3;
+	}
 
-		// Default to 16 if no console info available
-		return 16;
+	private debugWithTimestamp(...args: any[]) {
+		if (this.debug) {
+			const timestamp = new Date().toISOString();
+			console.debug(`[${timestamp}]`, ...args);
+		}
 	}
 }
