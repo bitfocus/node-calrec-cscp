@@ -8,8 +8,13 @@
     "lint": "npx @biomejs/biome lint --write",
     "check": "npx @biomejs/biome check --write",
     "build": "tsc",
-    "dev": "ts-node src/examples.ts",
-    "clean": "rm -rf dist"
+    "dev": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:integration": "jest client.test.ts",
+    "test:unit": "jest converters.test.ts protocol.test.ts",
+    "examples": "ts-node src/examples.ts"
   },
   "keywords": [],
   "author": "Bitfocus AS <william@bitfocus.io>",
@@ -20,6 +25,9 @@
     "typescript": "^5.8.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.0.6"
+    "@biomejs/biome": "2.0.6",
+    "@types/jest": "^30.0.0",
+    "jest": "^30.0.5",
+    "ts-jest": "^29.4.0"
   }
 }

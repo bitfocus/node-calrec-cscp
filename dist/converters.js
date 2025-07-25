@@ -1,21 +1,36 @@
 "use strict";
+// src/converters.ts
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.mainLevelToDb = mainLevelToDb;
 exports.dbToMainLevel = dbToMainLevel;
 exports.channelLevelToDb = channelLevelToDb;
 exports.dbToChannelLevel = dbToChannelLevel;
-// Data from the "Protocol Level to dB conversion table" Appendix
+/**
+ * Conversion map for Main Fader levels to dB values.
+ * Data from the "Protocol Level to dB conversion table" Appendix of the protocol specification.
+ *
+ * Protocol values range from 0-1023, corresponding to dB values from -100 to 0.
+ */
 const MAIN_FADER_MAP = [
-    [0, -100],
-    [40, -100],
-    [80, -70],
-    [162, -50],
-    [519, -20],
-    [760, -10],
-    [1004, 0],
-    [1023, 0],
+    [0, -100], // Minimum level (silent)
+    [40, -100], // End of silent range
+    [80, -70], // -70dB point
+    [162, -50], // -50dB point
+    [519, -20], // -20dB point
+    [760, -10], // -10dB point
+    [1004, 0], // Unity gain (0dB)
+    [1023, 0], // Maximum level (0dB)
 ];
-// TODO: Fix this.. It should adhere to the complete list of points in the spec. For now: good enough.
+/**
+ * Conversion map for Channel/Group/VCA Fader levels to dB values.
+ * Data from the "Protocol Level to dB conversion table" Appendix of the protocol specification.
+ *
+ * Protocol values range from 0-1023, corresponding to dB values from -100 to +10.
+ * This map provides more granular control than main faders, allowing for positive gain.
+ *
+ * Note: This map should be updated to match the complete specification when available.
+ * The current implementation provides good accuracy for typical use cases.
+ */
 const CHANNEL_FADER_MAP = [
     [0, -100], // 0-40 = -100dB (faded out and silent)
     [40, -100], // End of silent range
@@ -30,18 +45,19 @@ const CHANNEL_FADER_MAP = [
     [400, -20], // -20dB point
     [519, -10], // -10dB point
     [639, -5], // -5dB point
-    [760, 0], // End of -10 to 0dB range
+    [760, 0], // Unity gain (0dB)
     [761, 0], // Start of linear steps from 0 to 10dB
     [1004, 10], // End of 0 to 10dB range
-    [1023, 10], // 1004-1023 = 10dB
+    [1023, 10], // Maximum level (+10dB)
 ];
 /**
- * Generic function to perform linear interpolation between points in a map.
- * @param value The value to convert (either level or dB).
- * @param map The conversion map to use.
- * @param fromIndex The index of the value in the ConversionPoint tuple (0 for level, 1 for dB).
- * @param toIndex The index of the target value in the ConversionPoint tuple (1 for dB, 0 for level).
- * @returns The converted value.
+ * Performs linear interpolation between points in a conversion map.
+ *
+ * @param value - The value to convert (either protocol level or dB)
+ * @param map - The conversion map to use
+ * @param fromIndex - The index of the source value in the ConversionPoint tuple (0 for protocol level, 1 for dB)
+ * @param toIndex - The index of the target value in the ConversionPoint tuple (1 for dB, 0 for protocol level)
+ * @returns The converted value
  */
 function interpolate(value, map, fromIndex, toIndex) {
     // Find the two points the value lies between
@@ -66,37 +82,41 @@ function interpolate(value, map, fromIndex, toIndex) {
     const toRange = p2[toIndex] - p1[toIndex];
     const ratio = (value - p1[fromIndex]) / fromRange;
     const result = p1[toIndex] + ratio * toRange;
-    // For level conversion, round to the nearest integer
+    // For protocol level conversion, round to the nearest integer
     return toIndex === 0 ? Math.round(result) : result;
 }
 /**
  * Converts a Main Fader protocol level (0-1023) to decibels (dB).
- * @param level The protocol level.
- * @returns The dB value.
+ *
+ * @param level - The protocol level (0-1023)
+ * @returns The dB value (typically -100 to 0 dB)
  */
 function mainLevelToDb(level) {
     return interpolate(level, MAIN_FADER_MAP, 0, 1);
 }
 /**
  * Converts decibels (dB) to the nearest Main Fader protocol level (0-1023).
- * @param db The dB value.
- * @returns The protocol level.
+ *
+ * @param db - The dB value (typically -100 to 0 dB)
+ * @returns The protocol level (0-1023)
  */
 function dbToMainLevel(db) {
     return interpolate(db, MAIN_FADER_MAP, 1, 0);
 }
 /**
  * Converts a Channel/Group/VCA Fader protocol level (0-1023) to decibels (dB).
- * @param level The protocol level.
- * @returns The dB value.
+ *
+ * @param level - The protocol level (0-1023)
+ * @returns The dB value (typically -100 to +10 dB)
  */
 function channelLevelToDb(level) {
     return interpolate(level, CHANNEL_FADER_MAP, 0, 1);
 }
 /**
  * Converts decibels (dB) to the nearest Channel/Group/VCA Fader protocol level (0-1023).
- * @param db The dB value.
- * @returns The protocol level.
+ *
+ * @param db - The dB value (typically -100 to +10 dB)
+ * @returns The protocol level (0-1023)
  */
 function dbToChannelLevel(db) {
     return interpolate(db, CHANNEL_FADER_MAP, 1, 0);

@@ -16,8 +16,12 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CalrecClient = void 0;
+// src/index.ts
+// Main client class
 var client_1 = require("./client");
 Object.defineProperty(exports, "CalrecClient", { enumerable: true, get: function () { return client_1.CalrecClient; } });
+// All types and interfaces
 __exportStar(require("./types"), exports);
+// Conversion utilities
 __exportStar(require("./converters"), exports);
 //# sourceMappingURL=index.js.map
