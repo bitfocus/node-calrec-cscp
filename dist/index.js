@@ -1,5 +1,5 @@
 "use strict";
-/** biome-ignore-all assist/source/organizeImports: stupid */
+// src/index.ts
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
@@ -16,12 +16,10 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CalrecClient = void 0;
-// src/index.ts
-// Main client class
 var client_1 = require("./client");
 Object.defineProperty(exports, "CalrecClient", { enumerable: true, get: function () { return client_1.CalrecClient; } });
-// All types and interfaces
-__exportStar(require("./types"), exports);
 // Conversion utilities
 __exportStar(require("./converters"), exports);
+// All types and interfaces
+__exportStar(require("./types"), exports);
 //# sourceMappingURL=index.js.map

@@ -1,12 +1,12 @@
 {
 	"name": "@bitfocusas/calrec-cscp",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"scripts": {
-		"format": "npx @biomejs/biome format --write",
-		"lint": "npx @biomejs/biome lint --write",
-		"check": "npx @biomejs/biome check --write",
+		"format": "npx @biomejs/biome format --write src/",
+		"lint": "npx @biomejs/biome lint --write src/",
+		"check": "npx @biomejs/biome check --write src/",
 		"build": "tsc",
 		"dev": "tsc --watch",
 		"test": "jest",
@@ -25,7 +25,7 @@
 	"keywords": [],
 	"author": "Bitfocus AS <william@bitfocus.io>",
 	"license": "MIT",
-	"description": "A Node.js client for the Calrec CSCP protocol",
+	"description": "A Node.js client for basic control and monitoring of Calrec consoles via the CSCP protocol",
 	"dependencies": {
 		"ts-node": "^10.9.2",
 		"typescript": "^5.8.3"

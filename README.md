@@ -3,19 +3,32 @@
 [![npm version](https://badge.fury.io/js/@bitfocusas%2Fcalrec-cscp.svg)](https://badge.fury.io/js/@bitfocusas%2Fcalrec-cscp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A Node.js client library for communicating with Calrec audio consoles using the CSCP (Calrec Serial Control Protocol). This library provides a robust, type-safe interface for controlling and monitoring Calrec mixing consoles over TCP/IP.
+A Node.js client library for communicating with Calrec audio consoles using the CSCP (Calrec Serial Control Protocol). This library provides a robust, type-safe interface for basic control and monitoring of Calrec mixing consoles over TCP/IP.
 
 ## Features
 
 - 🔌 **TCP/IP Communication** - Connect to Calrec consoles over network
-- 🎛️ **Full Console Control** - Control faders, mutes, routing, and more
+- 🎛️ **Basic Console Control** - Control faders, mutes, routing, and more
 - 📡 **Real-time Monitoring** - Receive live updates from the console
 - 🔄 **Auto-reconnection** - Automatic reconnection on connection loss
-- 🛡️ **Type Safety** - Full TypeScript support with comprehensive type definitions
+- 🛡️ **Type Safety** - Full TypeScript support with detailed type definitions
 - 🎯 **Event-driven** - Clean event-based API for state changes
 - 📊 **Unit Conversion** - Built-in dB/level conversion utilities
 - ⚙️ **Configurable Timing** - Runtime-configurable protocol timing settings
 - 🚀 **Async/Await** - Modern async API with robust error handling
+
+## What This Module Provides
+
+This library implements a subset of the Calrec CSCP protocol, providing control over:
+
+- **Fader Control**: Level, mute (cut), PFL, and labels
+- **Main Fader Control**: Level, PFL, and labels for main outputs
+- **Auxiliary Routing**: Route channels to auxiliary outputs (V20+ consoles)
+- **Main Routing**: Route channels to main outputs (V21+ consoles)
+- **Stereo Image Control**: Configure stereo image settings (V21+ consoles)
+- **Console Information**: Get console details and protocol version
+
+**Note**: This is not a complete console control solution. Calrec consoles offer many more features and capabilities that are not covered by this protocol implementation. This library provides a solid foundation for basic control and monitoring tasks.
 
 ## Installation
 
@@ -191,7 +204,7 @@ await client.disconnect();
 ### Error Handling
 
 ```typescript
-// Comprehensive error handling
+// Error handling
 client.on('error', (error) => {
   console.error('Client error:', error.message);
 });
@@ -216,7 +229,7 @@ try {
 
 ### CalrecClient
 
-The main client class for communicating with Calrec consoles.
+The main client class for communicating with Calrec consoles. This client provides access to a subset of the console's capabilities through the CSCP protocol.
 
 #### Constructor
 
@@ -323,7 +336,7 @@ The client extends EventEmitter and provides the following events:
 
 ### Examples
 
-The library includes a comprehensive examples script that demonstrates all available functionality organized by protocol levels:
+The library includes an examples script that demonstrates the available functionality organized by protocol levels:
 
 ```bash
 # Show help
@@ -350,11 +363,11 @@ The examples are organized by protocol levels:
 - **V20**: V1 + Auxiliary send routing extensions
 - **V21**: V20 + Channel/Group routing to mains extensions
 
-**Note:** The examples script includes comprehensive event handling for all unsolicited messages from the console, providing real-time feedback on state changes while minimizing debug noise.
+**Note:** The examples script includes event handling for unsolicited messages from the console, providing real-time feedback on state changes while minimizing debug noise.
 
 ### Types
 
-The library exports comprehensive TypeScript types:
+The library exports detailed TypeScript types:
 
 ```typescript
 import {
@@ -422,7 +435,7 @@ client.updateSettings({
 
 ## Error Handling
 
-The library provides comprehensive error handling with detailed error messages:
+The library provides detailed error handling with informative error messages:
 
 ```typescript
 client.on('error', (error) => {
@@ -470,9 +483,13 @@ npm run format  # Format code
 npm run check   # Run all checks
 ```
 
+### Testing
+
+The library includes both unit tests and integration tests. Integration tests require a physical Calrec console for full testing.
+
 ## Contributing
 
-We welcome contributions! This library is provided free of charge by Bitfocus AS to the audio community.
+We welcome contributions! This library is provided free of charge by Bitfocus AS to the audio community as a useful tool for basic Calrec console control.
 
 ### How to Contribute
 
@@ -500,13 +517,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/bitfocusas/calrec-cscp/issues)
-- **Documentation**: [GitHub Wiki](https://github.com/bitfocusas/calrec-cscp/wiki)
+- **Documentation**: This README and inline code documentation
 - **Email**: william@bitfocus.io
+
+**Note**: This is a community project. While we strive to help with issues, support is provided on a best-effort basis.
 
 ## Acknowledgments
 
 - Calrec Audio for the CSCP protocol specification
 - All contributors who help improve this library
+- The audio community for feedback and testing
 
 ---
 
