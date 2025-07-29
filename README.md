@@ -278,7 +278,6 @@ new CalrecClient(options: CalrecClientOptions, settings?: CalrecClientSettings)
 ##### Main Routing Control (V21+)
 - `getAvailableMains(): Promise<boolean[]>` - Get available main outputs
 - `setRouteToMain(mainId: number, routes: boolean[]): Promise<void>` - Set main routing
-- `getRouteToMain(mainId: number): Promise<boolean[]>` - Get main routing
 
 ##### Stereo Image Control (V21+)
 - `setStereoImage(faderId: number, image: StereoImage): Promise<void>` - Set stereo image
@@ -507,7 +506,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Acknowledgments
 
 - Calrec Audio for the CSCP protocol specification
-- The audio engineering community for feedback and testing
 - All contributors who help improve this library
 
 ---

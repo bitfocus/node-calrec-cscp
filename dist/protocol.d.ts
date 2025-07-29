@@ -46,12 +46,15 @@ export declare const COMMANDS: {
     readonly READ_UNKNOWN_0A: 10;
     readonly READ_UNKNOWN_0E: 14;
     readonly READ_UNKNOWN_0F: 15;
+    readonly WRITE_CONSOLE_NAME: 32775;
+    readonly WRITE_FADER_LABEL: 32779;
+    readonly WRITE_MAIN_FADER_LABEL: 32781;
+    readonly WRITE_CONSOLE_INFO: 32776;
     readonly READ_AVAILABLE_AUX: 16;
     readonly READ_FADER_ASSIGNMENT: 17;
     readonly READ_AUX_SEND_ROUTING: 18;
     readonly READ_AUX_OUTPUT_LEVEL: 19;
     readonly READ_AVAILABLE_MAINS: 20;
-    readonly READ_ROUTE_TO_MAIN: 21;
     readonly READ_STEREO_IMAGE: 22;
     readonly WRITE_FADER_LEVEL: 32768;
     readonly WRITE_FADER_CUT: 32769;

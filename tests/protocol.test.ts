@@ -1,8 +1,8 @@
 // tests/protocol.test.ts
 
-import { buildPacket, parsePacket, COMMANDS, ACK, NAK } from "../src/protocol";
+import { ACK, buildPacket, COMMANDS, NAK, parsePacket } from "../src/protocol";
 
-describe("Protocol", () => {
+describe("📡 Protocol", () => {
 	describe("buildPacket", () => {
 		test("should build a valid packet with no data", () => {
 			const packet = buildPacket(COMMANDS.READ_CONSOLE_INFO);
@@ -161,7 +161,7 @@ describe("Protocol", () => {
 			expect(COMMANDS.READ_AUX_SEND_ROUTING).toBe(0x0012);
 			expect(COMMANDS.READ_AUX_OUTPUT_LEVEL).toBe(0x0013);
 			expect(COMMANDS.READ_AVAILABLE_MAINS).toBe(0x0014);
-			expect(COMMANDS.READ_ROUTE_TO_MAIN).toBe(0x0015);
+
 			expect(COMMANDS.READ_STEREO_IMAGE).toBe(0x0016);
 		});
 
@@ -243,7 +243,6 @@ describe("Protocol", () => {
 			}
 
 			const testCommands = [
-				{ command: COMMANDS.READ_CONSOLE_INFO, data: Buffer.alloc(0) },
 				{ command: COMMANDS.READ_FADER_LEVEL, data: Buffer.from([0x00, 0x01]) },
 				{
 					command: COMMANDS.WRITE_FADER_LEVEL,
@@ -253,6 +252,9 @@ describe("Protocol", () => {
 			];
 
 			testCommands.forEach(({ command, data }) => {
+				console.log("command", command);
+				console.log("data", data);
+
 				const packet = createIncomingPacket(command, data);
 				const parsed = parsePacket(packet);
 

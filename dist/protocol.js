@@ -103,6 +103,11 @@ exports.COMMANDS = {
     READ_UNKNOWN_0A: 0x000a,
     READ_UNKNOWN_0E: 0x000e,
     READ_UNKNOWN_0F: 0x000f,
+    // Write commands that may be sent by the console (not fully documented)
+    WRITE_CONSOLE_NAME: 0x8007, // Response to READ_CONSOLE_NAME
+    WRITE_FADER_LABEL: 0x800b, // Response to READ_FADER_LABEL
+    WRITE_MAIN_FADER_LABEL: 0x800d, // Response to READ_MAIN_FADER_LABEL
+    WRITE_CONSOLE_INFO: 0x8008, // Response to READ_CONSOLE_INFO
     // Read Commands - Version 20+ (Auxiliary send routing extensions)
     READ_AVAILABLE_AUX: 0x0010,
     READ_FADER_ASSIGNMENT: 0x0011,
@@ -110,7 +115,6 @@ exports.COMMANDS = {
     READ_AUX_OUTPUT_LEVEL: 0x0013,
     // Read Commands - Version 21+ (Channel/Group routing to mains extensions)
     READ_AVAILABLE_MAINS: 0x0014,
-    READ_ROUTE_TO_MAIN: 0x0015,
     READ_STEREO_IMAGE: 0x0016,
     // Write Commands (MSB=1) - All versions
     WRITE_FADER_LEVEL: 0x8000,
@@ -141,8 +145,12 @@ exports.READ_ONLY_COMMANDS = new Set([
     exports.COMMANDS.READ_AUX_SEND_ROUTING,
     exports.COMMANDS.READ_AUX_OUTPUT_LEVEL,
     exports.COMMANDS.READ_AVAILABLE_MAINS,
-    exports.COMMANDS.READ_ROUTE_TO_MAIN,
     exports.COMMANDS.READ_STEREO_IMAGE,
+    // Response commands from console (these are read-only from controller perspective)
+    exports.COMMANDS.WRITE_CONSOLE_NAME,
+    exports.COMMANDS.WRITE_FADER_LABEL,
+    exports.COMMANDS.WRITE_MAIN_FADER_LABEL,
+    exports.COMMANDS.WRITE_CONSOLE_INFO,
 ]);
 /**
  * Commands that require protocol version 20 or higher
@@ -162,7 +170,6 @@ exports.VERSION_20_COMMANDS = new Set([
  */
 exports.VERSION_21_COMMANDS = new Set([
     exports.COMMANDS.READ_AVAILABLE_MAINS,
-    exports.COMMANDS.READ_ROUTE_TO_MAIN,
     exports.COMMANDS.WRITE_ROUTE_TO_MAIN,
     exports.COMMANDS.READ_STEREO_IMAGE,
     exports.COMMANDS.WRITE_STEREO_IMAGE,

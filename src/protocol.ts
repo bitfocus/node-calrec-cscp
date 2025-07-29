@@ -114,7 +114,7 @@ export const COMMANDS = {
 	READ_FADER_LABEL: 0x000b,
 	READ_MAIN_PFL: 0x000c,
 	READ_MAIN_FADER_LABEL: 0x000d,
-	
+
 	// Additional commands that may be sent by the console (not fully documented)
 	READ_UNKNOWN_03: 0x0003,
 	READ_UNKNOWN_04: 0x0004,
@@ -124,6 +124,12 @@ export const COMMANDS = {
 	READ_UNKNOWN_0E: 0x000e,
 	READ_UNKNOWN_0F: 0x000f,
 
+	// Write commands that may be sent by the console (not fully documented)
+	WRITE_CONSOLE_NAME: 0x8007, // Response to READ_CONSOLE_NAME
+	WRITE_FADER_LABEL: 0x800b, // Response to READ_FADER_LABEL
+	WRITE_MAIN_FADER_LABEL: 0x800d, // Response to READ_MAIN_FADER_LABEL
+	WRITE_CONSOLE_INFO: 0x8008, // Response to READ_CONSOLE_INFO
+
 	// Read Commands - Version 20+ (Auxiliary send routing extensions)
 	READ_AVAILABLE_AUX: 0x0010,
 	READ_FADER_ASSIGNMENT: 0x0011,
@@ -132,7 +138,6 @@ export const COMMANDS = {
 
 	// Read Commands - Version 21+ (Channel/Group routing to mains extensions)
 	READ_AVAILABLE_MAINS: 0x0014,
-	READ_ROUTE_TO_MAIN: 0x0015,
 	READ_STEREO_IMAGE: 0x0016,
 
 	// Write Commands (MSB=1) - All versions
@@ -167,8 +172,12 @@ export const READ_ONLY_COMMANDS = new Set<number>([
 	COMMANDS.READ_AUX_SEND_ROUTING,
 	COMMANDS.READ_AUX_OUTPUT_LEVEL,
 	COMMANDS.READ_AVAILABLE_MAINS,
-	COMMANDS.READ_ROUTE_TO_MAIN,
 	COMMANDS.READ_STEREO_IMAGE,
+	// Response commands from console (these are read-only from controller perspective)
+	COMMANDS.WRITE_CONSOLE_NAME,
+	COMMANDS.WRITE_FADER_LABEL,
+	COMMANDS.WRITE_MAIN_FADER_LABEL,
+	COMMANDS.WRITE_CONSOLE_INFO,
 ]);
 
 /**
@@ -190,7 +199,6 @@ export const VERSION_20_COMMANDS = new Set<number>([
  */
 export const VERSION_21_COMMANDS = new Set<number>([
 	COMMANDS.READ_AVAILABLE_MAINS,
-	COMMANDS.READ_ROUTE_TO_MAIN,
 	COMMANDS.WRITE_ROUTE_TO_MAIN,
 	COMMANDS.READ_STEREO_IMAGE,
 	COMMANDS.WRITE_STEREO_IMAGE,

@@ -1,33 +1,39 @@
 {
-  "name": "@bitfocusas/calrec-cscp",
-  "version": "1.1.0",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "format": "npx @biomejs/biome format --write",
-    "lint": "npx @biomejs/biome lint --write",
-    "check": "npx @biomejs/biome check --write",
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:integration": "jest client.test.ts",
-    "test:unit": "jest converters.test.ts protocol.test.ts",
-    "examples": "ts-node src/examples.ts"
-  },
-  "keywords": [],
-  "author": "Bitfocus AS <william@bitfocus.io>",
-  "license": "MIT",
-  "description": "A Node.js client for the Calrec CSCP protocol",
-  "dependencies": {
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.0.6",
-    "@types/jest": "^30.0.0",
-    "jest": "^30.0.5",
-    "ts-jest": "^29.4.0"
-  }
+	"name": "@bitfocusas/calrec-cscp",
+	"version": "1.1.0",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"scripts": {
+		"format": "npx @biomejs/biome format --write",
+		"lint": "npx @biomejs/biome lint --write",
+		"check": "npx @biomejs/biome check --write",
+		"build": "tsc",
+		"dev": "tsc --watch",
+		"test": "jest",
+		"test:verbose": "jest --verbose",
+		"test:pretty": "jest --verbose --colors --no-coverage",
+		"test:watch": "jest --watch",
+		"test:watch:pretty": "jest --watch --verbose --colors",
+		"test:coverage": "jest --coverage",
+		"test:integration": "jest client.test.ts",
+		"test:unit": "jest converters.test.ts protocol.test.ts",
+		"test:no-integration": "SKIP_INTEGRATION_TESTS=true jest",
+		"test:integration-only": "RUN_INTEGRATION_TESTS=true jest client.test.ts",
+		"test:help": "echo 'Available test commands:' && echo '  npm test              - Run all tests (default output)' && echo '  npm run test:verbose   - Run tests with verbose output' && echo '  npm run test:pretty    - Run tests with verbose output and colors' && echo '  npm run test:watch     - Run tests in watch mode' && echo '  npm run test:watch:pretty - Run tests in watch mode with verbose output' && echo '  npm run test:coverage  - Run tests with coverage report' && echo '  npm run test:integration - Run only integration tests' && echo '  npm run test:unit      - Run only unit tests' && echo '  npm run test:no-integration - Run tests without integration tests' && echo '  npm run test:integration-only - Run only integration tests (requires console)'",
+		"examples": "ts-node src/examples.ts"
+	},
+	"keywords": [],
+	"author": "Bitfocus AS <william@bitfocus.io>",
+	"license": "MIT",
+	"description": "A Node.js client for the Calrec CSCP protocol",
+	"dependencies": {
+		"ts-node": "^10.9.2",
+		"typescript": "^5.8.3"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.0.6",
+		"@types/jest": "^30.0.0",
+		"jest": "^30.0.5",
+		"ts-jest": "^29.4.0"
+	}
 }

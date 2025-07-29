@@ -135,3 +135,33 @@ export function channelLevelToDb(level: number): number {
 export function dbToChannelLevel(db: number): number {
 	return interpolate(db, CHANNEL_FADER_MAP, 1, 0);
 }
+
+/**
+ * Converts a hex string to a readable string (for console name and labels).
+ *
+ * @param hexString - The hex string to convert
+ * @returns The decoded string
+ */
+export function hexToString(hexString: string): string {
+	try {
+		// Remove any leading zeros that might be padding
+		const cleanHex = hexString.replace(/^0+/, "");
+		if (cleanHex.length === 0) return "";
+
+		// Convert hex to buffer and then to string
+		const buffer = Buffer.from(cleanHex, "hex");
+		return buffer.toString("utf8").trim();
+	} catch (_error) {
+		return hexString; // Return original if conversion fails
+	}
+}
+
+/**
+ * Converts a string to a hex string (for console name and labels).
+ *
+ * @param str - The string to convert
+ * @returns The hex string
+ */
+export function stringToHex(str: string): string {
+	return Buffer.from(str, "utf8").toString("hex");
+}

@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { type CalrecClientEvents, type CalrecClientOptions, ConnectionState, type ConsoleInfo, type ClientState, type FaderAssignment, type StereoImage } from "./types";
+import { type CalrecClientEvents, type CalrecClientOptions, type ClientState, ConnectionState, type ConsoleInfo, type FaderAssignment, type StereoImage } from "./types";
 /**
  * Settings for protocol timing and behavior. All values are in milliseconds unless otherwise noted.
  */
@@ -154,12 +154,6 @@ export declare class CalrecClient extends EventEmitter {
      * @returns Promise resolving to array of booleans for each fader route.
      */
     getAuxSendRouting(auxId: number): Promise<boolean[]>;
-    /**
-     * Get routing to a main bus (V21+).
-     * @param mainId The main bus ID.
-     * @returns Promise resolving to array of booleans for each fader route.
-     */
-    getRouteToMain(mainId: number): Promise<boolean[]>;
     /**
      * Set aux routing for an aux bus.
      * @param auxId The aux bus ID.

@@ -1,11 +1,12 @@
 // tests/client.test.ts
 
 import { CalrecClient } from "../src/client";
-import { ConnectionState, ConsoleInfo } from "../src/types";
-import { TEST_CONFIG, TEST_SETTINGS, waitForEvent } from "./setup";
+import { ConnectionState } from "../src/types";
+import { getTestConfig, TEST_SETTINGS, waitForEvent } from "./setup";
 
 describe("CalrecClient Integration Tests", () => {
 	let client: CalrecClient;
+	const TEST_CONFIG = getTestConfig();
 
 	beforeAll(async () => {
 		client = new CalrecClient(TEST_CONFIG, TEST_SETTINGS);
@@ -35,13 +36,8 @@ describe("CalrecClient Integration Tests", () => {
 	beforeEach(async () => {
 		// Ensure we're connected for each test
 		if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-			try {
-				await client.connect();
-				await waitForEvent(client, "ready", 300);
-			} catch (error) {
-				console.warn("Failed to connect in beforeEach:", error);
-				// Continue with tests - they will handle connection issues
-			}
+			await client.connect();
+			await waitForEvent(client, "ready", 1000);
 		}
 	});
 
@@ -50,113 +46,28 @@ describe("CalrecClient Integration Tests", () => {
 			const newClient = new CalrecClient(TEST_CONFIG, TEST_SETTINGS);
 			newClient.setMaxListeners(50);
 
-			try {
-				await newClient.connect();
-				expect(newClient.getConnectionState()).toBe(ConnectionState.CONNECTED);
+			await newClient.connect();
+			expect(newClient.getConnectionState()).toBe(ConnectionState.CONNECTED);
 
-				await waitForEvent(newClient, "ready", 300);
-				// Console info and name might be null if the console doesn't respond to these requests
-				const state = newClient.getState();
-				console.log("Connection state:", state);
-				// Don't fail if console info or name are null - this is now expected behavior
-			} catch (error) {
-				console.warn("Connection test failed:", error);
-				// Don't fail the test if connection fails - this might be expected
-				expect(error).toBeDefined();
-			} finally {
-				await newClient.disconnect();
-			}
-		});
+			await waitForEvent(newClient, "ready", 300);
+			const state = newClient.getState();
+			expect(state.connectionState).toBe(ConnectionState.CONNECTED);
 
-		test("should get console information", async () => {
-			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping console info test - not connected");
-				return;
-			}
-
-			try {
-				const consoleInfo = await client.getConsoleInfo();
-
-				expect(consoleInfo).toBeDefined();
-				expect(consoleInfo.protocolVersion).toBeGreaterThan(0);
-				expect(consoleInfo.maxFaders).toBeGreaterThan(0);
-				expect(consoleInfo.maxMains).toBeGreaterThan(0);
-				expect(consoleInfo.deskLabel).toBeTruthy();
-			} catch (error) {
-				console.warn("Console info test failed:", error);
-				// Console info might not be available - this is now expected behavior
-				expect(error).toBeDefined();
-			}
-		});
-
-		test("should get console name", async () => {
-			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping console name test - not connected");
-				return;
-			}
-
-			try {
-				const consoleName = await client.getConsoleName();
-
-				expect(consoleName).toBeDefined();
-				expect(typeof consoleName).toBe("string");
-				expect(consoleName.length).toBeGreaterThan(0);
-			} catch (error) {
-				console.warn("Console name test failed:", error);
-				// Console name might not be available - this is now expected behavior
-				expect(error).toBeDefined();
-			}
-		});
-
-		test("should handle missing console info and name gracefully", async () => {
-			const newClient = new CalrecClient(TEST_CONFIG, {
-				...TEST_SETTINGS,
-				initializationTimeoutMs: 50, // Very short timeout to test behavior
-			});
-			newClient.setMaxListeners(50);
-
-			try {
-				await newClient.connect();
-				expect(newClient.getConnectionState()).toBe(ConnectionState.CONNECTED);
-
-				await waitForEvent(newClient, "ready", 300);
-				const state = newClient.getState();
-				
-				// The client should still be ready even if console info/name are null
-				expect(state.connectionState).toBe(ConnectionState.CONNECTED);
-				// Console info and name might be null, which is now acceptable
-				console.log("State after connection:", state);
-			} catch (error) {
-				console.warn("Timeout test failed:", error);
-				// Don't fail the test - this might be expected
-				expect(error).toBeDefined();
-			} finally {
-				await newClient.disconnect();
-			}
+			await newClient.disconnect();
 		});
 	});
 
 	describe("Fader Level Control", () => {
 		test("should set and get fader level correctly", async () => {
-			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping fader level test - not connected");
-				return;
-			}
+			const testLevel = 500;
 
-			try {
-				const testLevel = 500;
+			await client.setFaderLevel(TEST_CONFIG.testFaderId, testLevel);
 
-				await client.setFaderLevel(TEST_CONFIG.testFaderId, testLevel);
+			// Wait a moment for the command to process
+			await new Promise((resolve) => setTimeout(resolve, 200));
 
-				// Wait a moment for the command to process
-				await new Promise((resolve) => setTimeout(resolve, 200));
-
-				const actualLevel = await client.getFaderLevel(TEST_CONFIG.testFaderId);
-				expect(actualLevel).toBe(testLevel);
-			} catch (error) {
-				console.warn("Fader level test failed:", error);
-				expect(error).toBeDefined();
-			}
+			const actualLevel = await client.getFaderLevel(TEST_CONFIG.testFaderId);
+			expect(actualLevel).toBe(testLevel);
 		});
 
 		test("should set and get fader level in dB correctly", async () => {
@@ -209,28 +120,33 @@ describe("CalrecClient Integration Tests", () => {
 			}
 		});
 
-		test("should clamp fader levels to valid range", async () => {
+		test("should validate fader levels and reject invalid values", async () => {
 			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping fader level clamp test - not connected");
+				console.warn("Skipping fader level validation test - not connected");
 				return;
 			}
 
 			try {
-				// Test setting level above maximum
-				await client.setFaderLevel(TEST_CONFIG.testFaderId, 1500);
-				await new Promise((resolve) => setTimeout(resolve, 200));
+				// Test setting level above maximum - should throw validation error
+				await expect(
+					client.setFaderLevel(TEST_CONFIG.testFaderId, 1500),
+				).rejects.toThrow(
+					"Invalid fader level: 1500. Must be between 0 and 1023.",
+				);
 
-				const maxLevel = await client.getFaderLevel(TEST_CONFIG.testFaderId);
-				expect(maxLevel).toBe(1023);
+				// Test setting level below minimum - should throw validation error
+				await expect(
+					client.setFaderLevel(TEST_CONFIG.testFaderId, -100),
+				).rejects.toThrow(
+					"Invalid fader level: -100. Must be between 0 and 1023.",
+				);
 
-				// Test setting level below minimum
-				await client.setFaderLevel(TEST_CONFIG.testFaderId, -100);
-				await new Promise((resolve) => setTimeout(resolve, 200));
-
-				const minLevel = await client.getFaderLevel(TEST_CONFIG.testFaderId);
-				expect(minLevel).toBe(0);
+				// Test setting valid level - should not throw
+				await expect(
+					client.setFaderLevel(TEST_CONFIG.testFaderId, 500),
+				).resolves.not.toThrow();
 			} catch (error) {
-				console.warn("Fader level clamp test failed:", error);
+				console.warn("Fader level validation test failed:", error);
 				expect(error).toBeDefined();
 			}
 		});
@@ -331,54 +247,36 @@ describe("CalrecClient Integration Tests", () => {
 	describe("Fader Cut Read", () => {
 		test("should get fader cut state", async () => {
 			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping fader cut read test - not connected");
-				return;
+				throw new Error("Not connected - skipping fader cut read test");
 			}
 
-			try {
-				const isCut = await client.getFaderCut(TEST_CONFIG.testFaderId);
+			const isCut = await client.getFaderCut(TEST_CONFIG.testFaderId);
 
-				expect(typeof isCut).toBe("boolean");
-			} catch (error) {
-				console.warn("Fader cut read test failed:", error);
-				expect(error).toBeDefined();
-			}
+			expect(typeof isCut).toBe("boolean");
 		});
 	});
 
 	describe("Fader PFL Read", () => {
 		test("should get fader PFL state", async () => {
 			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping fader PFL read test - not connected");
-				return;
+				throw new Error("Not connected - skipping fader PFL read test");
 			}
 
-			try {
-				const isPfl = await client.getFaderPfl(TEST_CONFIG.testFaderId);
+			const isPfl = await client.getFaderPfl(TEST_CONFIG.testFaderId);
 
-				expect(typeof isPfl).toBe("boolean");
-			} catch (error) {
-				console.warn("Fader PFL read test failed:", error);
-				expect(error).toBeDefined();
-			}
+			expect(typeof isPfl).toBe("boolean");
 		});
 	});
 
 	describe("Main PFL Read", () => {
 		test("should get main PFL state", async () => {
 			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping main PFL read test - not connected");
-				return;
+				throw new Error("Not connected - skipping main PFL read test");
 			}
 
-			try {
-				const isPfl = await client.getMainPfl(TEST_CONFIG.testMainId);
+			const isPfl = await client.getMainPfl(TEST_CONFIG.testMainId);
 
-				expect(typeof isPfl).toBe("boolean");
-			} catch (error) {
-				console.warn("Main PFL read test failed:", error);
-				expect(error).toBeDefined();
-			}
+			expect(typeof isPfl).toBe("boolean");
 		});
 	});
 
@@ -509,8 +407,9 @@ describe("CalrecClient Integration Tests", () => {
 				if (error instanceof Error) {
 					const maxFaders = client.getMaxFaderCount();
 					expect(
-						error.message.includes(`Maximum of ${maxFaders} fader routes allowed`) ||
-							error.message.includes("Client is not connected"),
+						error.message.includes(
+							`Maximum of ${maxFaders} fader routes allowed`,
+						) || error.message.includes("Client is not connected"),
 					).toBe(true);
 				} else {
 					expect(error).toBeDefined();
@@ -636,29 +535,6 @@ describe("CalrecClient Integration Tests", () => {
 		});
 	});
 
-	describe("Route to Main Read (V21+)", () => {
-		test("should get route to main", async () => {
-			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
-				console.warn("Skipping route to main read test - not connected");
-				return;
-			}
-
-			try {
-				const routes = await client.getRouteToMain(TEST_CONFIG.testMainId);
-
-				expect(Array.isArray(routes)).toBe(true);
-				const maxFaders = client.getMaxFaderCount();
-				expect(routes.length).toBe(maxFaders);
-				routes.forEach((route) => {
-					expect(typeof route).toBe("boolean");
-				});
-			} catch (error) {
-				console.warn("Route to main read test failed:", error);
-				expect(error).toBeDefined();
-			}
-		});
-	});
-
 	describe("Main Routing Control", () => {
 		test("should set main routing correctly", async () => {
 			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
@@ -694,8 +570,9 @@ describe("CalrecClient Integration Tests", () => {
 				if (error instanceof Error) {
 					const maxFaders = client.getMaxFaderCount();
 					expect(
-						error.message.includes(`Maximum of ${maxFaders} main routes allowed`) ||
-							error.message.includes("Client is not connected"),
+						error.message.includes(
+							`Maximum of ${maxFaders} main routes allowed`,
+						) || error.message.includes("Client is not connected"),
 					).toBe(true);
 				} else {
 					expect(error).toBeDefined();
@@ -939,7 +816,7 @@ describe("CalrecClient Integration Tests", () => {
 
 		test("should validate fader IDs correctly", async () => {
 			const maxFaders = client.getMaxFaderCount();
-			
+
 			// Test valid fader ID
 			try {
 				// This should not throw if connected and fader exists
@@ -966,11 +843,11 @@ describe("CalrecClient Integration Tests", () => {
 
 		test("should create routing arrays with correct size", () => {
 			const maxFaders = client.getMaxFaderCount();
-			
+
 			// Test aux routing array
 			const auxRoutes = new Array(maxFaders).fill(false);
 			expect(auxRoutes.length).toBe(maxFaders);
-			
+
 			// Test main routing array
 			const mainRoutes = new Array(maxFaders).fill(false);
 			expect(mainRoutes.length).toBe(maxFaders);

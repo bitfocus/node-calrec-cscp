@@ -1,13 +1,13 @@
 // tests/converters.test.ts
 
 import {
+	channelLevelToDb,
 	dbToChannelLevel,
 	dbToMainLevel,
-	channelLevelToDb,
 	mainLevelToDb,
 } from "../src/converters";
 
-describe("Converters", () => {
+describe("🔄 Converters", () => {
 	describe("Channel Fader Conversions", () => {
 		test("should convert dB to level and back correctly", () => {
 			const testCases = [

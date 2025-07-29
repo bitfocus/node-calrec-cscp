@@ -26,4 +26,18 @@ export declare function channelLevelToDb(level: number): number;
  * @returns The protocol level (0-1023)
  */
 export declare function dbToChannelLevel(db: number): number;
+/**
+ * Converts a hex string to a readable string (for console name and labels).
+ *
+ * @param hexString - The hex string to convert
+ * @returns The decoded string
+ */
+export declare function hexToString(hexString: string): string;
+/**
+ * Converts a string to a hex string (for console name and labels).
+ *
+ * @param str - The string to convert
+ * @returns The hex string
+ */
+export declare function stringToHex(str: string): string;
 //# sourceMappingURL=converters.d.ts.map
