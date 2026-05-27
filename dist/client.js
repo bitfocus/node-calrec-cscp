@@ -865,8 +865,8 @@ class CalrecClient extends node_events_1.EventEmitter {
     async setFaderLevel(faderId, level) {
         this.ensureConnected();
         // Validate fader ID
-        if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
-            throw new Error(`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`);
+        if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
+            throw new Error(`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`);
         }
         // Validate level
         if (level < 0 || level > 1023) {
@@ -885,8 +885,8 @@ class CalrecClient extends node_events_1.EventEmitter {
     async getFaderLevel(faderId) {
         this.ensureConnected();
         // Validate fader ID
-        if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
-            throw new Error(`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`);
+        if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
+            throw new Error(`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`);
         }
         const data = Buffer.alloc(2);
         data.writeUInt16BE(faderId, 0);
@@ -1152,8 +1152,8 @@ class CalrecClient extends node_events_1.EventEmitter {
     async setStereoImage(faderId, image) {
         this.ensureConnected();
         // Validate fader ID
-        if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
-            throw new Error(`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`);
+        if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
+            throw new Error(`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`);
         }
         const data = Buffer.alloc(32);
         data.writeUInt16BE(faderId, 0);
@@ -1184,8 +1184,8 @@ class CalrecClient extends node_events_1.EventEmitter {
     async getStereoImage(faderId) {
         this.ensureConnected();
         // Validate fader ID
-        if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
-            throw new Error(`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`);
+        if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
+            throw new Error(`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`);
         }
         const data = Buffer.alloc(2);
         data.writeUInt16BE(faderId, 0);
