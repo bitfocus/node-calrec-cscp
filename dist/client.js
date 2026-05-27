@@ -868,9 +868,10 @@ class CalrecClient extends node_events_1.EventEmitter {
         if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
             throw new Error(`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`);
         }
-        // Validate level
+        // Ignore out-of-range levels so relative up/down commands become no-ops
+        // when a caller's source value is already invalid.
         if (level < 0 || level > 1023) {
-            throw new Error(`Invalid fader level: ${level}. Must be between 0 and 1023.`);
+            return;
         }
         const data = Buffer.alloc(4);
         data.writeUInt16BE(faderId, 0);
