@@ -120,26 +120,22 @@ describe("CalrecClient Integration Tests", () => {
 			}
 		});
 
-		test("should validate fader levels and reject invalid values", async () => {
+		test("should silently ignore out-of-range fader levels", async () => {
 			if (client.getConnectionState() !== ConnectionState.CONNECTED) {
 				console.warn("Skipping fader level validation test - not connected");
 				return;
 			}
 
 			try {
-				// Test setting level above maximum - should throw validation error
+				// Test setting level above maximum - should be ignored
 				await expect(
 					client.setFaderLevel(TEST_CONFIG.testFaderId, 1500),
-				).rejects.toThrow(
-					"Invalid fader level: 1500. Must be between 0 and 1023.",
-				);
+				).resolves.toBeUndefined();
 
-				// Test setting level below minimum - should throw validation error
+				// Test setting level below minimum - should be ignored
 				await expect(
 					client.setFaderLevel(TEST_CONFIG.testFaderId, -100),
-				).rejects.toThrow(
-					"Invalid fader level: -100. Must be between 0 and 1023.",
-				);
+				).resolves.toBeUndefined();
 
 				// Test setting valid level - should not throw
 				await expect(

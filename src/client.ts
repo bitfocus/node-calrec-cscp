@@ -1136,11 +1136,10 @@ export class CalrecClient extends EventEmitter {
 			);
 		}
 
-		// Validate level
+		// Ignore out-of-range levels so relative up/down commands become no-ops
+		// when a caller's source value is already invalid.
 		if (level < 0 || level > 1023) {
-			throw new Error(
-				`Invalid fader level: ${level}. Must be between 0 and 1023.`,
-			);
+			return;
 		}
 
 		const data = Buffer.alloc(4);
