@@ -1130,9 +1130,9 @@ export class CalrecClient extends EventEmitter {
 		this.ensureConnected();
 
 		// Validate fader ID
-		if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
+		if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
 			throw new Error(
-				`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`,
+				`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`,
 			);
 		}
 
@@ -1158,9 +1158,9 @@ export class CalrecClient extends EventEmitter {
 		this.ensureConnected();
 
 		// Validate fader ID
-		if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
+		if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
 			throw new Error(
-				`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`,
+				`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`,
 			);
 		}
 
@@ -1465,9 +1465,9 @@ export class CalrecClient extends EventEmitter {
 		this.ensureConnected();
 
 		// Validate fader ID
-		if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
+		if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
 			throw new Error(
-				`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`,
+				`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`,
 			);
 		}
 
@@ -1506,9 +1506,9 @@ export class CalrecClient extends EventEmitter {
 		this.ensureConnected();
 
 		// Validate fader ID
-		if (faderId < 1 || faderId > this.getEffectiveMaxFaderCount()) {
+		if (faderId < 0 || faderId >= this.getEffectiveMaxFaderCount()) {
 			throw new Error(
-				`Invalid fader ID: ${faderId}. Must be between 1 and ${this.getEffectiveMaxFaderCount()}.`,
+				`Invalid fader ID: ${faderId}. Must be between 0 and ${this.getEffectiveMaxFaderCount() - 1}.`,
 			);
 		}
 

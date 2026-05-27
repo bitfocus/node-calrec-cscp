@@ -834,7 +834,9 @@ describe("CalrecClient Integration Tests", () => {
 			} catch (error) {
 				if (error instanceof Error) {
 					expect(error.message).toContain(`Invalid fader ID: ${maxFaders + 1}`);
-					expect(error.message).toContain(`Must be between 1 and ${maxFaders}`);
+					expect(error.message).toContain(
+						`Must be between 0 and ${maxFaders - 1}`,
+					);
 				} else {
 					expect(error).toBeDefined();
 				}
