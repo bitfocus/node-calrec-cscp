@@ -34,6 +34,23 @@ export interface CalrecClientSettings {
 	commandResponseTimeoutMs?: number;
 	/** Timeout for initialization commands (console info/name) (default: 100) */
 	initializationTimeoutMs?: number;
+	/**
+	 * How long a TCP connection attempt may take before it is abandoned
+	 * (default: 5000). Without this the OS decides, which is around 75 seconds of
+	 * SYN retries on an unreachable host — long enough to look like a hang.
+	 */
+	connectTimeoutMs?: number;
+	/**
+	 * How often an idle connection is probed to prove the console is still there
+	 * (default: 5000). Set to 0 to disable heartbeats entirely.
+	 */
+	heartbeatIntervalMs?: number;
+	/**
+	 * Consecutive unanswered probes tolerated before the connection is treated as
+	 * lost (default: 2). Worst-case detection time is
+	 * `heartbeatIntervalMs * (heartbeatMaxMisses + 1)`.
+	 */
+	heartbeatMaxMisses?: number;
 }
 
 const DEFAULT_SETTINGS: Required<CalrecClientSettings> = {
@@ -41,7 +58,49 @@ const DEFAULT_SETTINGS: Required<CalrecClientSettings> = {
 	faderLevelRateMs: 100,
 	commandResponseTimeoutMs: 500,
 	initializationTimeoutMs: 200,
+	connectTimeoutMs: 5000,
+	heartbeatIntervalMs: 5000,
+	heartbeatMaxMisses: 2,
 };
+
+/**
+ * Backstop for the application heartbeat: with keepalive on, the OS eventually
+ * fails writes to a peer that has vanished instead of buffering them forever.
+ */
+const SOCKET_KEEPALIVE_DELAY_MS = 10000;
+
+interface PendingRequest {
+	resolve: (value: unknown) => void;
+	reject: (reason?: Error) => void;
+	/** Set immediately after construction, so the handler can close over the request. */
+	timeout?: NodeJS.Timeout;
+}
+
+/**
+ * Commands whose payload does not begin with an id, so a request and its
+ * response are correlated by command number alone.
+ */
+const NON_ID_SPECIFIC_COMMANDS = new Set<number>([
+	COMMANDS.READ_CONSOLE_INFO,
+	COMMANDS.READ_CONSOLE_NAME,
+	COMMANDS.READ_AVAILABLE_AUX,
+	COMMANDS.READ_AVAILABLE_MAINS,
+]);
+
+/**
+ * Builds the key that correlates a request with its response. Both sides must
+ * derive it the same way, so requests and responses share this one function.
+ * @param command Either the read command or the write command the console
+ * answers with; the write bit is masked off.
+ * @param data The payload, whose first two bytes are the id for id-specific commands.
+ */
+function buildRequestKey(command: number, data: Buffer): string {
+	const readCmd = command & 0x7fff;
+	if (NON_ID_SPECIFIC_COMMANDS.has(readCmd) || data.length < 2) {
+		return `${readCmd}`;
+	}
+	return `${readCmd}:${data.readUInt16BE(0)}`;
+}
 
 function parseNakError(errorCode: number): string {
 	const errors: string[] = [];
@@ -81,15 +140,17 @@ export class CalrecClient extends EventEmitter {
 	private isProcessing = false;
 	private lastFaderLevelSent = 0;
 	private lastCommandSent = 0;
-	private requestMap = new Map<
-		string,
-		{ resolve: (value: unknown) => void; reject: (reason?: Error) => void }
-	>();
+	private requestMap = new Map<string, PendingRequest[]>();
 	private commandResponseQueue: Array<() => void> = [];
 	private commandInFlight: boolean = false;
 	private maxFaderCount?: number;
 	private settings: Required<CalrecClientSettings>;
 	private debug: boolean;
+	private heartbeatTimer: NodeJS.Timeout | null = null;
+	/** When anything was last received; any byte proves the link is alive. */
+	private lastRxAt = 0;
+	private lastHeartbeatProbeAt: number | null = null;
+	private missedHeartbeats = 0;
 
 	constructor(
 		options: CalrecClientOptions,
@@ -180,25 +241,52 @@ export class CalrecClient extends EventEmitter {
 			consoleName: null,
 		});
 
-		this.socket = new net.Socket();
+		const socket = new net.Socket();
+		socket.setKeepAlive(true, SOCKET_KEEPALIVE_DELAY_MS);
+		this.socket = socket;
 
-		await new Promise<void>((resolve, reject) => {
-			this.socket?.once("error", (err) => {
-				this.debugWithTimestamp(
-					`[CalrecClient] Socket connection error: ${err.message}`,
-				);
-				reject(err);
+		try {
+			await new Promise<void>((resolve, reject) => {
+				const handleConnectError = (err: Error) => {
+					clearTimeout(connectTimeout);
+					this.debugWithTimestamp(
+						`[CalrecClient] Socket connection error: ${err.message}`,
+					);
+					reject(err);
+				};
+				// A host that is powered off or off-network answers nothing at all, and
+				// the OS would keep retrying SYNs for over a minute before failing.
+				const connectTimeout = setTimeout(() => {
+					socket.off("error", handleConnectError);
+					reject(
+						new Error(
+							`Timed out connecting to ${this.options.host}:${this.options.port} after ${this.settings.connectTimeoutMs}ms.`,
+						),
+					);
+				}, this.settings.connectTimeoutMs);
+				socket.once("error", handleConnectError);
+				socket.connect(this.options.port, this.options.host, () => {
+					clearTimeout(connectTimeout);
+					socket.off("error", handleConnectError);
+					this.debugWithTimestamp(
+						`[CalrecClient] Socket connected to ${this.options.host}:${this.options.port}`,
+					);
+					resolve();
+				});
 			});
-			this.socket?.connect(this.options.port, this.options.host, () => {
-				this.socket?.off("error", reject);
-				this.debugWithTimestamp(
-					`[CalrecClient] Socket connected to ${this.options.host}:${this.options.port}`,
-				);
-				resolve();
-			});
-		});
+		} catch (error) {
+			// Leave no half-open socket behind: it would make every later connect()
+			// think a connection already exists and return without doing anything.
+			socket.destroy();
+			if (this.socket === socket) this.socket = null;
+			this.setState({ connectionState: ConnectionState.DISCONNECTED });
+			this.scheduleReconnect();
+			throw error;
+		}
 
 		this.setState({ connectionState: ConnectionState.CONNECTED });
+		this.lastRxAt = Date.now();
+		this.startHeartbeat();
 		this.emit("connect");
 		// Start command queue processing immediately
 		this.processCommandQueue();
@@ -236,8 +324,26 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	private handleDisconnect(): void {
-		this.socket?.destroy();
+		const socket = this.socket;
 		this.socket = null;
+		if (socket) {
+			// Drop our handlers before destroying, so the resulting close/error
+			// events cannot re-enter this method with everything already torn down.
+			socket.removeAllListeners();
+			socket.on("error", () => undefined);
+			socket.destroy();
+		}
+		this.stopHeartbeat();
+
+		// Nothing queued can be sent or answered any more, and anything left behind
+		// would be flushed as a stale command once a reconnect succeeds.
+		this.dataBuffer = Buffer.alloc(0);
+		this.commandQueue.length = 0;
+		this.faderLevelQueue.length = 0;
+		this.rejectAllPendingRequests(
+			"Connection closed before a response arrived.",
+		);
+
 		this.emit("disconnect");
 
 		if (this.state.connectionState !== ConnectionState.DISCONNECTED) {
@@ -248,13 +354,93 @@ export class CalrecClient extends EventEmitter {
 			});
 		}
 
-		if (this.options.autoReconnect) {
-			this.setState({ connectionState: ConnectionState.RECONNECTING });
-			this.reconnectTimeout = setTimeout(
-				() => this.connect(),
-				this.options.reconnectInterval,
-			);
+		this.scheduleReconnect();
+	}
+
+	/**
+	 * A console can vanish without the socket ever closing — a pulled cable, a
+	 * dead switch or a dropped route leaves TCP with nothing to report, so the
+	 * client would look connected indefinitely. Probing an idle link is the only
+	 * way to notice.
+	 */
+	private startHeartbeat(): void {
+		this.stopHeartbeat();
+		if (this.settings.heartbeatIntervalMs <= 0) return;
+
+		this.heartbeatTimer = setInterval(() => {
+			this.checkHeartbeat();
+		}, this.settings.heartbeatIntervalMs);
+		// A heartbeat must not be a reason for the host process to stay alive.
+		this.heartbeatTimer.unref();
+	}
+
+	private stopHeartbeat(): void {
+		if (this.heartbeatTimer) {
+			clearInterval(this.heartbeatTimer);
+			this.heartbeatTimer = null;
 		}
+		this.lastHeartbeatProbeAt = null;
+		this.missedHeartbeats = 0;
+	}
+
+	private checkHeartbeat(): void {
+		if (
+			this.state.connectionState !== ConnectionState.CONNECTED ||
+			!this.socket
+		) {
+			return;
+		}
+
+		const now = Date.now();
+
+		// The console pushes state changes constantly, so any recent traffic is
+		// proof of life and a probe would only add noise.
+		if (now - this.lastRxAt < this.settings.heartbeatIntervalMs) {
+			this.lastHeartbeatProbeAt = null;
+			this.missedHeartbeats = 0;
+			return;
+		}
+
+		if (
+			this.lastHeartbeatProbeAt !== null &&
+			this.lastRxAt < this.lastHeartbeatProbeAt
+		) {
+			this.missedHeartbeats++;
+			if (this.missedHeartbeats >= this.settings.heartbeatMaxMisses) {
+				const error = new Error(
+					`Console stopped responding: ${this.missedHeartbeats} heartbeat probe(s) unanswered, nothing received for ${now - this.lastRxAt}ms.`,
+				);
+				this.debugWithTimestamp(`[CalrecClient] ${error.message}`);
+				// An unhandled "error" event would take the host process down from a
+				// timer callback, and the disconnect below reports the loss anyway.
+				if (this.listenerCount("error") > 0) this.emit("error", error);
+				this.setState({ connectionState: ConnectionState.ERROR });
+				this.handleDisconnect();
+				return;
+			}
+		}
+
+		this.lastHeartbeatProbeAt = now;
+		// Console info is a cheap read every protocol version answers; the reply
+		// content is irrelevant, only that something came back.
+		this.getConsoleInfo().catch(() => undefined);
+	}
+
+	/** Starts the reconnect timer if auto-reconnect is enabled. */
+	private scheduleReconnect(): void {
+		if (!this.options.autoReconnect || this.reconnectTimeout) return;
+
+		this.setState({ connectionState: ConnectionState.RECONNECTING });
+		this.reconnectTimeout = setTimeout(() => {
+			this.reconnectTimeout = null;
+			// connect() rejects when the console is still down; that rejection has
+			// no caller to catch it and would otherwise crash the process.
+			this.connect().catch((error) => {
+				this.debugWithTimestamp(
+					`[CalrecClient] Reconnect attempt failed: ${error}`,
+				);
+			});
+		}, this.options.reconnectInterval);
 	}
 
 	/**
@@ -271,6 +457,7 @@ export class CalrecClient extends EventEmitter {
 	}
 
 	private handleData(chunk: Buffer): void {
+		this.lastRxAt = Date.now();
 		this.debugWithTimestamp(
 			`[CalrecClient] <<< RX HEX: ${chunk.toString("hex").toUpperCase()}`,
 		);
@@ -284,48 +471,36 @@ export class CalrecClient extends EventEmitter {
 			);*/
 		}
 
-		// Process ACK/NAK messages first
-		if (this.dataBuffer.length > 0) {
+		// Process ACK/NAK bytes and complete packets. A single chunk can hold an
+		// ACK/NAK followed by packets, so every branch either consumes bytes and
+		// keeps looping or returns to wait for more data.
+		while (this.dataBuffer.length > 0) {
 			if (this.dataBuffer[0] === ACK) {
-				this.debugWithTimestamp(`[CalrecClient] <<< RX: ACK (0x06)`);
+				this.debugWithTimestamp(
+					`[CalrecClient] <<< RX: ACK (0x${ACK.toString(16)})`,
+				);
 				this.dataBuffer = this.dataBuffer.slice(1);
-				return;
+				continue;
 			}
 			if (this.dataBuffer[0] === NAK) {
 				if (this.dataBuffer.length > 1) {
 					const errorCode = this.dataBuffer[1];
 					const errorMessage = parseNakError(errorCode);
 					this.debugWithTimestamp(
-						`[CalrecClient] <<< RX: NAK (0x15) - ${errorMessage} (code: ${errorCode})`,
+						`[CalrecClient] <<< RX: NAK (0x${NAK.toString(16)}) - ${errorMessage} (code: ${errorCode})`,
 					);
-
-					// Try to reject the matching pending request
-					let matched = false;
-					for (const [requestKey, { reject }] of this.requestMap.entries()) {
-						reject(new Error(`NAK: ${errorMessage}`));
-						this.requestMap.delete(requestKey);
-						matched = true;
-						break; // Only reject one per NAK
-					}
-					if (!matched) {
-						this.debugWithTimestamp(
-							`[CalrecClient] NAK without pending request: ${errorMessage}`,
-						);
-					}
+					this.rejectOldestPendingRequest(errorMessage);
 					this.dataBuffer = this.dataBuffer.slice(2);
-					return;
+					continue;
 				}
 				// Debug: NAK without error code
 				this.debugWithTimestamp(
-					`[CalrecClient] <<< RX: NAK (0x15) without error code. Buffer: ${this.dataBuffer.toString("hex").toUpperCase()}`,
+					`[CalrecClient] <<< RX: NAK (0x${NAK.toString(16)}) without error code. Buffer: ${this.dataBuffer.toString("hex").toUpperCase()}`,
 				);
 				this.dataBuffer = this.dataBuffer.slice(1);
-				return;
+				continue;
 			}
-		}
 
-		// Process complete packets
-		while (this.dataBuffer.length > 0) {
 			const sohIndex = this.dataBuffer.indexOf(SOH);
 			if (sohIndex === -1) {
 				// No SOH found, wait for more data
@@ -386,31 +561,13 @@ export class CalrecClient extends EventEmitter {
 	private processIncomingMessage(message: ParsedMessage): void {
 		const { command, data } = message;
 
-		const readCmd = command & 0x7fff;
-		let requestKey = `${readCmd}`;
+		const requestKey = buildRequestKey(command, data);
 
-		// Global commands (like getConsoleInfo) don't have an ID in their request,
-		// so their key is just the command number.
-		// ID-specific commands (like getFaderLevel) need the ID appended to the key.
-		const nonIdSpecificCommands = [
-			COMMANDS.READ_CONSOLE_INFO,
-			COMMANDS.READ_CONSOLE_NAME,
-			COMMANDS.READ_AVAILABLE_AUX,
-			COMMANDS.READ_AVAILABLE_MAINS,
-			COMMANDS.READ_STEREO_IMAGE,
-		] as const;
-		const isIdSpecificCommand = !nonIdSpecificCommands.includes(
-			readCmd as (typeof nonIdSpecificCommands)[number],
-		);
-
-		if (isIdSpecificCommand && data.length >= 2) {
-			const id = data.readUInt16BE(0);
-			requestKey = `${readCmd}:${id}`;
-		}
-
-		const pendingRequest = this.requestMap.get(requestKey);
+		const pendingRequest = this.takeOldestPendingRequest(requestKey);
 		if (pendingRequest) {
-			this.requestMap.delete(requestKey);
+			// One reply settles one waiter. Settling every waiter on the key would
+			// leave any further replies for the same key looking unsolicited, which
+			// spuriously emits change events (e.g. faderLevelChange).
 			pendingRequest.resolve(this.parseResponseData(command, data));
 			return;
 		}
@@ -715,6 +872,30 @@ export class CalrecClient extends EventEmitter {
 						this.emit("auxOutputLevelChange", auxId, level);
 					}
 					break;
+				case COMMANDS.READ_FADER_LABEL: // 0x000b -> WRITE_FADER_LABEL: 0x800b
+					if (data.length >= 2) {
+						const faderId = data.readUInt16BE(0);
+						const label = this.parseResponseData(command, data) as string;
+						this.debugWithTimestamp(
+							`[CalrecClient] Emitting faderLabelChange: faderId=${faderId}, label="${label}"`,
+						);
+						this.emit("faderLabelChange", faderId, label);
+					}
+					break;
+				case COMMANDS.READ_MAIN_FADER_LABEL: // 0x000d -> WRITE_MAIN_FADER_LABEL: 0x800d
+					if (data.length >= 2) {
+						const mainId = data.readUInt16BE(0);
+						const label = this.parseResponseData(command, data) as string;
+						this.debugWithTimestamp(
+							`[CalrecClient] Emitting mainLabelChange: mainId=${mainId}, label="${label}"`,
+						);
+						this.emit("mainLabelChange", mainId, label);
+					}
+					break;
+				case COMMANDS.READ_AVAILABLE_AUX: // 0x0010 -> WRITE_AVAILABLE_AUX: 0x8010
+				case COMMANDS.READ_AVAILABLE_MAINS: // 0x0014 -> WRITE_AVAILABLE_MAINS: 0x8014
+					this.emitAvailableChange(baseCommand, data);
+					break;
 				default:
 					// For other write commands, just emit as unsolicited message
 					this.emit("unsolicitedMessage", { command, data });
@@ -748,10 +929,6 @@ export class CalrecClient extends EventEmitter {
 					);
 					this.setState({ consoleName });
 				}
-				break;
-			case COMMANDS.READ_FADER_LABEL:
-				// Optionally parse and cache fader label if needed
-				// this.debugWithTimestamp(`[CalrecClient] Received unsolicited fader label:`, data);
 				break;
 			case COMMANDS.READ_MAIN_FADER_LEVEL:
 				// Handle unsolicited main fader level changes
@@ -792,6 +969,10 @@ export class CalrecClient extends EventEmitter {
 					);
 				}
 				break;
+			case COMMANDS.READ_AVAILABLE_AUX:
+			case COMMANDS.READ_AVAILABLE_MAINS:
+				this.emitAvailableChange(baseCommand, data);
+				break;
 			case COMMANDS.READ_UNKNOWN_03:
 			case COMMANDS.READ_UNKNOWN_04:
 			case COMMANDS.READ_UNKNOWN_06:
@@ -812,6 +993,26 @@ export class CalrecClient extends EventEmitter {
 				this.emit("unsolicitedMessage", { command, data });
 				break;
 			}
+		}
+	}
+
+	/**
+	 * The console volunteers its aux/main availability during startup rather than
+	 * only answering a read, so those pushes are turned into the same events a
+	 * caller would get from getAvailableAux()/getAvailableMains().
+	 */
+	private emitAvailableChange(baseCommand: number, data: Buffer): void {
+		const available = this.parseResponseData(baseCommand, data) as boolean[];
+		if (baseCommand === COMMANDS.READ_AVAILABLE_AUX) {
+			this.debugWithTimestamp(
+				`[CalrecClient] Emitting availableAuxesChange: ${available.filter(Boolean).length} available`,
+			);
+			this.emit("availableAuxesChange", available);
+		} else {
+			this.debugWithTimestamp(
+				`[CalrecClient] Emitting availableMainsChange: ${available.filter(Boolean).length} available`,
+			);
+			this.emit("availableMainsChange", available);
 		}
 	}
 
@@ -885,6 +1086,100 @@ export class CalrecClient extends EventEmitter {
 		});
 	}
 
+	/**
+	 * The protocol has no request IDs, so several in-flight reads can map to the
+	 * same response key. Every one of them is kept so that no caller is left with
+	 * a promise that never settles; replies are matched FIFO (one reply, one waiter).
+	 */
+	private addPendingRequest(requestKey: string, request: PendingRequest): void {
+		const waiters = this.requestMap.get(requestKey);
+		if (waiters) {
+			waiters.push(request);
+		} else {
+			this.requestMap.set(requestKey, [request]);
+		}
+	}
+
+	/**
+	 * Removes a single waiter. Returns false if it was already settled, which lets
+	 * a timeout know it lost the race against a response.
+	 */
+	private removePendingRequest(
+		requestKey: string,
+		request: PendingRequest,
+	): boolean {
+		const waiters = this.requestMap.get(requestKey);
+		if (!waiters) return false;
+
+		const index = waiters.indexOf(request);
+		if (index === -1) return false;
+
+		waiters.splice(index, 1);
+		clearTimeout(request.timeout);
+		if (waiters.length === 0) {
+			this.requestMap.delete(requestKey);
+		}
+		return true;
+	}
+
+	/** Removes and returns the oldest waiter for a key, cancelling its timeout. */
+	private takeOldestPendingRequest(
+		requestKey: string,
+	): PendingRequest | undefined {
+		const waiters = this.requestMap.get(requestKey);
+		if (!waiters || waiters.length === 0) return undefined;
+
+		const request = waiters.shift();
+		if (!request) return undefined;
+
+		clearTimeout(request.timeout);
+		if (waiters.length === 0) {
+			this.requestMap.delete(requestKey);
+		}
+		return request;
+	}
+
+	/** Removes and returns every waiter for a key, cancelling their timeouts. */
+	private takePendingRequests(requestKey: string): PendingRequest[] {
+		const waiters = this.requestMap.get(requestKey);
+		if (!waiters) return [];
+
+		this.requestMap.delete(requestKey);
+		for (const waiter of waiters) {
+			clearTimeout(waiter.timeout);
+		}
+		return waiters;
+	}
+
+	/**
+	 * A NAK carries no request id, so it can only be attributed to the oldest
+	 * outstanding read. Sibling waiters on the same key keep waiting for their
+	 * own replies (or timeouts).
+	 */
+	private rejectOldestPendingRequest(errorMessage: string): void {
+		const oldestKey = this.requestMap.keys().next();
+		if (oldestKey.done) {
+			this.debugWithTimestamp(
+				`[CalrecClient] NAK without pending request: ${errorMessage}`,
+			);
+			return;
+		}
+
+		const request = this.takeOldestPendingRequest(oldestKey.value);
+		if (request) {
+			request.reject(new Error(`NAK: ${errorMessage}`));
+		}
+	}
+
+	/** Rejects every outstanding read, e.g. when the connection goes away. */
+	private rejectAllPendingRequests(reason: string): void {
+		for (const requestKey of [...this.requestMap.keys()]) {
+			for (const request of this.takePendingRequests(requestKey)) {
+				request.reject(new Error(reason));
+			}
+		}
+	}
+
 	private dequeueNextCommand() {
 		if (!this.commandInFlight && this.commandResponseQueue.length > 0) {
 			const next = this.commandResponseQueue.shift();
@@ -921,19 +1216,14 @@ export class CalrecClient extends EventEmitter {
 
 			// If it is a read command, set up the promise resolver and timeout
 			if ((command & 0x8000) === 0) {
-				let requestKey = `${command}`;
-				if (data.length >= 2) {
-					requestKey = `${command}:${data.readUInt16BE(0)}`;
-				}
-				this.requestMap.set(requestKey, {
+				const requestKey = buildRequestKey(command, data);
+
+				const pendingRequest: PendingRequest = {
 					resolve: resolve as (value: unknown) => void,
 					reject,
-				});
-
-				// Timeout handler for command response
-				const handleCommandTimeout = () => {
-					if (this.requestMap.has(requestKey)) {
-						this.requestMap.delete(requestKey);
+				};
+				pendingRequest.timeout = setTimeout(() => {
+					if (this.removePendingRequest(requestKey, pendingRequest)) {
 						this.debugWithTimestamp(
 							`[CalrecClient] Command timeout for ${requestKey} (${command.toString(16)})`,
 						);
@@ -943,11 +1233,8 @@ export class CalrecClient extends EventEmitter {
 							),
 						);
 					}
-				};
-				setTimeout(
-					handleCommandTimeout,
-					this.settings.commandResponseTimeoutMs,
-				);
+				}, this.settings.commandResponseTimeoutMs);
+				this.addPendingRequest(requestKey, pendingRequest);
 			} else {
 				// For write commands, resolve immediately
 				resolve(undefined as T);
@@ -1229,8 +1516,8 @@ export class CalrecClient extends EventEmitter {
 		this.ensureConnected();
 		const data = Buffer.alloc(2);
 		data.writeUInt16BE(faderId, 0);
-		const result = await this.sendCommand(COMMANDS.READ_FADER_CUT, data);
-		return result === 0; // 0 = cut, 1 = uncut
+		// parseResponseData has already applied the 0 = cut convention.
+		return this.sendCommand<boolean>(COMMANDS.READ_FADER_CUT, data);
 	}
 
 	/**
@@ -1242,8 +1529,8 @@ export class CalrecClient extends EventEmitter {
 		this.ensureConnected();
 		const data = Buffer.alloc(2);
 		data.writeUInt16BE(faderId, 0);
-		const result = await this.sendCommand(COMMANDS.READ_FADER_PFL, data);
-		return result === 1; // 1 = PFL on, 0 = PFL off
+		// parseResponseData has already applied the 1 = PFL on convention.
+		return this.sendCommand<boolean>(COMMANDS.READ_FADER_PFL, data);
 	}
 
 	/**
@@ -1255,8 +1542,8 @@ export class CalrecClient extends EventEmitter {
 		this.ensureConnected();
 		const data = Buffer.alloc(2);
 		data.writeUInt16BE(mainId, 0);
-		const result = await this.sendCommand(COMMANDS.READ_MAIN_PFL, data);
-		return result === 1; // 1 = PFL on, 0 = PFL off
+		// parseResponseData has already applied the 1 = PFL on convention.
+		return this.sendCommand<boolean>(COMMANDS.READ_MAIN_PFL, data);
 	}
 
 	/**

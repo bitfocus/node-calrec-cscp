@@ -53,11 +53,9 @@ export const shouldRunIntegrationTest = (): boolean => {
 	if (SKIP_INTEGRATION_TESTS) {
 		return false;
 	}
-	if (RUN_INTEGRATION_TESTS) {
-		return true;
-	}
-	// Default: run integration tests if no environment variable is set
-	return true;
+	// These tests talk to a physical console, so they are opt-in: without one on
+	// the network every read simply times out.
+	return RUN_INTEGRATION_TESTS;
 };
 
 // Helper function to skip integration tests with a clear message

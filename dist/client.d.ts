@@ -12,6 +12,23 @@ export interface CalrecClientSettings {
     commandResponseTimeoutMs?: number;
     /** Timeout for initialization commands (console info/name) (default: 100) */
     initializationTimeoutMs?: number;
+    /**
+     * How long a TCP connection attempt may take before it is abandoned
+     * (default: 5000). Without this the OS decides, which is around 75 seconds of
+     * SYN retries on an unreachable host — long enough to look like a hang.
+     */
+    connectTimeoutMs?: number;
+    /**
+     * How often an idle connection is probed to prove the console is still there
+     * (default: 5000). Set to 0 to disable heartbeats entirely.
+     */
+    heartbeatIntervalMs?: number;
+    /**
+     * Consecutive unanswered probes tolerated before the connection is treated as
+     * lost (default: 2). Worst-case detection time is
+     * `heartbeatIntervalMs * (heartbeatMaxMisses + 1)`.
+     */
+    heartbeatMaxMisses?: number;
 }
 export declare class CalrecClient extends EventEmitter {
     private options;
@@ -30,6 +47,11 @@ export declare class CalrecClient extends EventEmitter {
     private maxFaderCount?;
     private settings;
     private debug;
+    private heartbeatTimer;
+    /** When anything was last received; any byte proves the link is alive. */
+    private lastRxAt;
+    private lastHeartbeatProbeAt;
+    private missedHeartbeats;
     constructor(options: CalrecClientOptions, settings?: CalrecClientSettings);
     /**
      * Update protocol timing/settings at runtime.
@@ -47,6 +69,17 @@ export declare class CalrecClient extends EventEmitter {
     connect(): Promise<void>;
     private handleDisconnect;
     /**
+     * A console can vanish without the socket ever closing — a pulled cable, a
+     * dead switch or a dropped route leaves TCP with nothing to report, so the
+     * client would look connected indefinitely. Probing an idle link is the only
+     * way to notice.
+     */
+    private startHeartbeat;
+    private stopHeartbeat;
+    private checkHeartbeat;
+    /** Starts the reconnect timer if auto-reconnect is enabled. */
+    private scheduleReconnect;
+    /**
      * Disconnects from the Calrec console and disables auto-reconnect for this instance.
      * @returns Promise that resolves when disconnected.
      */
@@ -55,10 +88,37 @@ export declare class CalrecClient extends EventEmitter {
     private processIncomingMessage;
     private parseResponseData;
     private emitUnsolicitedEvent;
+    /**
+     * The console volunteers its aux/main availability during startup rather than
+     * only answering a read, so those pushes are turned into the same events a
+     * caller would get from getAvailableAux()/getAvailableMains().
+     */
+    private emitAvailableChange;
     private parseRoutingData;
     private parseAvailableData;
     private parseFaderAssignmentData;
     private enqueueCommandWithResponse;
+    /**
+     * The protocol has no request IDs, so several in-flight reads can map to the
+     * same response key. Every one of them is kept so that no caller is left with
+     * a promise that never settles.
+     */
+    private addPendingRequest;
+    /**
+     * Removes a single waiter. Returns false if it was already settled, which lets
+     * a timeout know it lost the race against a response.
+     */
+    private removePendingRequest;
+    /** Removes and returns every waiter for a key, cancelling their timeouts. */
+    private takePendingRequests;
+    /**
+     * A NAK carries no request id, so it can only be attributed to the oldest
+     * outstanding read. Every waiter on that key is rejected: the console answers
+     * a key once, so the siblings are never going to be answered either.
+     */
+    private rejectOldestPendingRequest;
+    /** Rejects every outstanding read, e.g. when the connection goes away. */
+    private rejectAllPendingRequests;
     private dequeueNextCommand;
     private sendCommand;
     private sendCommandWithQueue;

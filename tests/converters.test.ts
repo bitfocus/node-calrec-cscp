@@ -4,6 +4,7 @@ import {
 	channelLevelToDb,
 	dbToChannelLevel,
 	dbToMainLevel,
+	hexToString,
 	mainLevelToDb,
 } from "../src/converters";
 
@@ -146,5 +147,33 @@ describe("🔄 Converters", () => {
 			expect(channelLevelToDb(2000)).toBe(10);
 			expect(mainLevelToDb(2000)).toBe(0);
 		});
+	});
+});
+
+describe("🔤 hexToString padding and framing", () => {
+	test("decodes real console labels unchanged", () => {
+		expect(hexToString("4175782035")).toBe("Aux 5"); // "Aux 5"
+		expect(hexToString("4c20314620203141")).toBe("L 1F  1A");
+		expect(hexToString("4d43533a31")).toBe("MCS:1");
+	});
+
+	test("strips NUL padding without shifting bytes", () => {
+		expect(hexToString("4d43533a31000000")).toBe("MCS:1"); // trailing pad
+		expect(hexToString("00004d4353")).toBe("MCS"); // leading pad
+	});
+
+	test("keeps byte alignment when a leading byte has a high nibble of zero", () => {
+		// An odd-length run of zero characters used to shift every later byte by a
+		// nibble, turning the rest of the string into mojibake.
+		expect(hexToString("0f4d6978")).toBe("\x0fMix");
+		expect(hexToString("0a4d4353")).toBe("\nMCS");
+	});
+
+	test("preserves leading spaces, which are part of the label", () => {
+		expect(hexToString("20204c31")).toBe("  L1");
+	});
+
+	test("returns an empty string for empty input", () => {
+		expect(hexToString("")).toBe("");
 	});
 });

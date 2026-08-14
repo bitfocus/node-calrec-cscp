@@ -2,9 +2,19 @@
 
 import { CalrecClient } from "../src/client";
 import { ConnectionState } from "../src/types";
-import { getTestConfig, TEST_SETTINGS, waitForEvent } from "./setup";
+import {
+	getTestConfig,
+	shouldRunIntegrationTest,
+	TEST_SETTINGS,
+	waitForEvent,
+} from "./setup";
 
-describe("CalrecClient Integration Tests", () => {
+// Requires a real console; run with `npm run test:integration-only`.
+const describeIntegration = shouldRunIntegrationTest()
+	? describe
+	: describe.skip;
+
+describeIntegration("CalrecClient Integration Tests", () => {
 	let client: CalrecClient;
 	const TEST_CONFIG = getTestConfig();
 

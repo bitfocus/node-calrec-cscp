@@ -131,13 +131,14 @@ function dbToChannelLevel(db) {
  */
 function hexToString(hexString) {
     try {
-        // Remove any leading zeros that might be padding
-        const cleanHex = hexString.replace(/^0+/, "");
-        if (cleanHex.length === 0)
-            return "";
-        // Convert hex to buffer and then to string
-        const buffer = Buffer.from(cleanHex, "hex");
-        return buffer.toString("utf8").trim();
+        // Padding is whole NUL bytes, so it has to be stripped after decoding.
+        // Stripping zeros off the hex text instead shifts every later byte by a
+        // nibble whenever the run of zeros has an odd length.
+        const buffer = Buffer.from(hexString, "hex");
+        const decoded = buffer.toString("utf8");
+        // Trailing whitespace is console padding; leading spaces are part of the
+        // label, so only NUL bytes are stripped from the front.
+        return decoded.replace(/^\0+/, "").replace(/[\0\s]+$/, "");
     }
     catch (_error) {
         return hexString; // Return original if conversion fails
