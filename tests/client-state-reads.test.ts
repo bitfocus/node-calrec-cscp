@@ -116,17 +116,17 @@ describe("CalrecClient boolean state reads", () => {
 		await new Promise((r) => setTimeout(r, 50));
 
 		try {
-			// One byte per bus, low bit set when the bus exists.
+			// One bit per bus, bit set when the bus exists.
 			console_.push(
 				consoleReply(
 					COMMANDS.WRITE_AVAILABLE_AUX,
-					Buffer.from([0x01, 0x01, 0x00, 0x01]),
+					Buffer.from([0x0b]),
 				),
 			);
 			console_.push(
 				consoleReply(
 					COMMANDS.WRITE_AVAILABLE_MAINS,
-					Buffer.from([0x01, 0x00, 0x01]),
+					Buffer.from([0x05]),
 				),
 			);
 
