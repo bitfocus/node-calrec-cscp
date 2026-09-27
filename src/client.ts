@@ -762,7 +762,7 @@ export class CalrecClient extends EventEmitter {
 					) {
 						const byte = data[byteIndex];
 						for (let bitIndex = 0; bitIndex < 8; bitIndex++) {
-							const auxIndex = byteIndex * 8 + bitIndex;
+							const mainIndex = byteIndex * 8 + bitIndex;
 							if (mainIndex < 16) {
 								available[mainIndex] = (byte & (1 << bitIndex)) !== 0;
 							}
