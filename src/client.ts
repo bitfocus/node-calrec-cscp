@@ -716,9 +716,9 @@ export class CalrecClient extends EventEmitter {
 					) {
 						const byte = data[byteIndex];
 						for (let bitIndex = 0; bitIndex < 8; bitIndex++) {
-							const faderIndex = byteIndex * 8 + bitIndex;
-							if (faderIndex < (maxFaders * 2)) {
-								stereoImage[faderIndex] = (byte & (1 << bitIndex)) !== 0;
+							const stereoIndex = byteIndex * 8 + bitIndex;
+							if (stereoIndex < maxFaders * 2) {
+								stereoImage[stereoIndex] = (byte & (1 << bitIndex)) !== 0;
 							}
 						}
 					}
@@ -924,7 +924,10 @@ export class CalrecClient extends EventEmitter {
 					break;
 				case COMMANDS.READ_STEREO_IMAGE: // 0x0016 -> ‎WRITE_STEREO_IMAGE‎: 0x8016
 					if (data.length >= 1) {
-						const stereoImage = this.parseResponseData(baseCommand, data) as boolean[];
+						const stereoImage = this.parseResponseData(
+							baseCommand,
+							data,
+						) as boolean[];
 						const faderCount = Math.floor(stereoImage.length / 2);
 						const maxFaders = this.getEffectiveMaxFaderCount();
 						for (
@@ -933,9 +936,12 @@ export class CalrecClient extends EventEmitter {
 							faderIndex++
 						) {
 							this.debugWithTimestamp(
-								`[CalrecClient] Emitting stereoImageChange: faderId=${faderIndex}, leftToBoth=${stereoImage[faderIndex]}, rightToBoth=${stereoImage[faderIndex+1]}`,
+								`[CalrecClient] Emitting stereoImageChange: faderId=${faderIndex}, leftToBoth=${stereoImage[faderIndex * 2]}, rightToBoth=${stereoImage[faderIndex * 2 + 1]}`,
 							);
-							this.emit("stereoImageChange", faderIndex, {leftToBoth: stereoImage[faderIndex], rightToBoth: stereoImage[faderIndex+1]});
+							this.emit("stereoImageChange", faderIndex, {
+								leftToBoth: stereoImage[faderIndex * 2],
+								rightToBoth: stereoImage[faderIndex * 2 + 1],
+							});
 						}
 					}
 					break;
