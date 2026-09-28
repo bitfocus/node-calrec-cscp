@@ -64,6 +64,16 @@ const DEFAULT_SETTINGS: Required<CalrecClientSettings> = {
 };
 
 /**
+ * Max mains when processing messages.
+ */
+const MAX_MAIN_COUNT = 16;
+
+/**
+ * Max auxes when processing messages.
+ */
+const MAX_AUX_COUNT = 32;
+
+/**
  * Backstop for the application heartbeat: with keepalive on, the OS eventually
  * fails writes to a peer that has vanished instead of buffering them forever.
  */
@@ -730,31 +740,9 @@ export class CalrecClient extends EventEmitter {
 			case COMMANDS.READ_MAIN_PFL:
 				return data[2] === 1; // 1 = PFL on, 0 = PFL off
 			case COMMANDS.READ_AVAILABLE_AUX:
-				try {
-					const available = new Array(32).fill(false);
-					for (let i = 0; i < Math.min(data.length, 32); i++) {
-						available[i] = (data[i] & 0x01) !== 0;
-					}
-					return available;
-				} catch (error) {
-					this.debugWithTimestamp(
-						`[CalrecClient] Failed to parse available aux: ${error}, data: ${data.toString("hex")}`,
-					);
-					return new Array(32).fill(false);
-				}
+				return this.parseAvailableData(data, MAX_AUX_COUNT);
 			case COMMANDS.READ_AVAILABLE_MAINS:
-				try {
-					const available = new Array(16).fill(false);
-					for (let i = 0; i < Math.min(data.length, 16); i++) {
-						available[i] = (data[i] & 0x01) !== 0;
-					}
-					return available;
-				} catch (error) {
-					this.debugWithTimestamp(
-						`[CalrecClient] Failed to parse available mains: ${error}, data: ${data.toString("hex")}`,
-					);
-					return new Array(16).fill(false);
-				}
+				return this.parseAvailableData(data, MAX_MAIN_COUNT);
 			case COMMANDS.READ_AUX_SEND_ROUTING:
 				try {
 					const maxFaders = this.getEffectiveMaxFaderCount();
@@ -1035,12 +1023,29 @@ export class CalrecClient extends EventEmitter {
 		return routes;
 	}
 
-	private parseAvailableData(data: Buffer): boolean[] {
-		const available = new Array(32).fill(false);
-		for (let i = 0; i < Math.min(data.length, 32); i++) {
-			available[i] = (data[i] & 0x01) !== 0;
+	private parseAvailableData(data: Buffer, maxCount: number): boolean[] {
+		try {
+			const available = new Array(maxCount).fill(false);
+			for (
+				let byteIndex = 0;
+				byteIndex < Math.min(data.length, Math.ceil(maxCount / 8));
+				byteIndex++
+			) {
+				const byte = data[byteIndex];
+				for (let bitIndex = 0; bitIndex < 8; bitIndex++) {
+					const availableIndex = byteIndex * 8 + bitIndex;
+					if (availableIndex < maxCount) {
+						available[availableIndex] = (byte & (1 << bitIndex)) !== 0;
+					}
+				}
+			}
+			return available;
+		} catch (error) {
+			this.debugWithTimestamp(
+				`[CalrecClient] Failed to parse available data: ${error}, data: ${data.toString("hex")}`,
+			);
+			return new Array(maxCount).fill(false);
 		}
-		return available;
 	}
 
 	private parseFaderAssignmentData(data: Buffer): FaderAssignment {
@@ -1559,13 +1564,9 @@ export class CalrecClient extends EventEmitter {
 		}
 		// If result is not an array, try to parse it from buffer
 		if (Buffer.isBuffer(result)) {
-			const available = new Array(32).fill(false); // Assume max 32 auxes
-			for (let i = 0; i < Math.min(result.length, 32); i++) {
-				available[i] = (result[i] & 0x01) !== 0;
-			}
-			return available;
+			return this.parseAvailableData(result, MAX_AUX_COUNT);
 		}
-		return new Array(32).fill(false); // Default fallback
+		return new Array(MAX_AUX_COUNT).fill(false); // Default fallback
 	}
 
 	/**
@@ -1581,13 +1582,9 @@ export class CalrecClient extends EventEmitter {
 		}
 		// If result is not an array, try to parse it from buffer
 		if (Buffer.isBuffer(result)) {
-			const available = new Array(16).fill(false); // Assume max 16 mains
-			for (let i = 0; i < Math.min(result.length, 16); i++) {
-				available[i] = (result[i] & 0x01) !== 0;
-			}
-			return available;
+			return this.parseAvailableData(result, MAX_MAIN_COUNT);
 		}
-		return new Array(16).fill(false); // Default fallback
+		return new Array(MAX_MAIN_COUNT).fill(false); // Default fallback
 	}
 
 	/**
