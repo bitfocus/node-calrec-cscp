@@ -2,7 +2,6 @@
 	"compilerOptions": {
 		"target": "es2020",
 		"lib": ["es2020"],
-		"allowJs": true,
 		"skipLibCheck": true,
 		"strict": true,
 		"forceConsistentCasingInFileNames": true,
@@ -11,12 +10,8 @@
 		"moduleResolution": "node",
 		"resolveJsonModule": true,
 		"isolatedModules": true,
-		"outDir": "./dist",
-		"rootDir": "./src",
-		"declaration": true,
-		"declarationMap": true,
-		"sourceMap": true
+		"noEmit": true
 	},
-	"include": ["src/**/*.ts", "src/*.ts"],
+	"include": ["src/**/*.ts", "tests/**/*.ts"],
 	"exclude": ["node_modules", "dist"]
 }

@@ -7,7 +7,7 @@ module.exports = {
 	transform: {
 		"^.+\\.ts$": "ts-jest",
 	},
-	collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts", "!src/examples.ts"],
+	collectCoverageFrom: ["src/**/*.ts", "!src/**/*.d.ts", "!src/test.ts"],
 	coverageDirectory: "coverage",
 	coverageReporters: ["text", "lcov", "html"],
 	testTimeout: 30000, // 30 seconds for network operations

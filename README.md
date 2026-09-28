@@ -367,36 +367,13 @@ The client extends EventEmitter and provides the following events:
 ##### Other Events
 - `unsolicitedMessage` - Raw unsolicited message received (only for truly unknown commands)
 
-### Examples
+### Protocol levels
 
-The library includes an examples script that demonstrates the available functionality organized by protocol levels:
+The snippets above follow the protocol level a console supports:
 
-```bash
-# Show help
-npm run examples -- --help
-
-# Run all examples (default)
-npm run examples
-
-# Run only basic commands (V1)
-npm run examples -- --level v1
-
-# Run V1 + V20 commands
-npm run examples -- --level v20
-
-# Run V1 + V20 + V21 commands
-npm run examples -- --level v21
-
-# Use custom console settings
-npm run examples -- --host 192.168.1.100 --port 1338
-```
-
-The examples are organized by protocol levels:
 - **V1**: Basic commands (all consoles)
 - **V20**: V1 + Auxiliary send routing extensions
 - **V21**: V20 + Channel/Group routing to mains extensions
-
-**Note:** The examples script includes event handling for unsolicited messages from the console, providing real-time feedback on state changes while minimizing debug noise.
 
 ### Types
 
@@ -493,6 +470,8 @@ try {
 
 ## Development
 
+This repository contains TypeScript source only. `dist/` is build output and is not committed. `npm pack` and `npm publish` compile it automatically before the package is packed.
+
 ### Building from Source
 
 ```bash
@@ -500,12 +479,7 @@ git clone https://github.com/bitfocus/node-calrec-cscp.git
 cd node-calrec-cscp
 npm install
 npm run build
-```
-
-### Running Examples
-
-```bash
-npm run dev
+npm test
 ```
 
 ### Code Quality
