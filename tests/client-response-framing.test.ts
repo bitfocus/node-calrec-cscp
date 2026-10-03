@@ -79,11 +79,31 @@ describe("CalrecClient response framing and correlation", () => {
 		}
 	});
 
-	test("a stereo image response is matched to its request", async () => {
+	test("a fader level response is matched to its request by ID", async () => {
+		const faderId = 1;
+
+		const console_ = await createFakeConsole((command, data) => {
+			if (command !== COMMANDS.READ_FADER_LEVEL) return null;
+			const payload = Buffer.from([data[0], data[1], 0x02, 0xbc]);
+			return consoleReply(COMMANDS.WRITE_FADER_LEVEL, payload);
+		});
+		const client = createClient(console_.port);
+		client.on("error", () => undefined);
+		await client.connect();
+
+		try {
+			await expect(client.getFaderLevel(faderId)).resolves.toEqual(700);
+		} finally {
+			await client.disconnect();
+			await console_.close();
+		}
+	});
+
+	test("a stereo image response is matched to its request (no ID)", async () => {
 		const faderId = 1;
 		const console_ = await createFakeConsole((command, data) => {
 			if (command !== COMMANDS.READ_STEREO_IMAGE) return null;
-			const payload = Buffer.from([data[0], data[1], 0x01, 0x00]);
+			const payload = Buffer.from([0x04]);
 			return consoleReply(COMMANDS.WRITE_STEREO_IMAGE, payload);
 		});
 		const client = createClient(console_.port);
