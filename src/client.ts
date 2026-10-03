@@ -95,6 +95,7 @@ const NON_ID_SPECIFIC_COMMANDS = new Set<number>([
 	COMMANDS.READ_CONSOLE_NAME,
 	COMMANDS.READ_AVAILABLE_AUX,
 	COMMANDS.READ_AVAILABLE_MAINS,
+	COMMANDS.READ_STEREO_IMAGE,
 ]);
 
 /**
@@ -1844,13 +1845,17 @@ export class CalrecClient extends EventEmitter {
 			);
 		}
 
-		const data = Buffer.alloc(2);
-		data.writeUInt16BE(faderId, 0);
 		const response = await this.sendCommand<StereoImage>(
 			COMMANDS.READ_STEREO_IMAGE,
-			data,
 		);
-		return response;
+		if (faderId * 2 + 1 <= response.length) {
+			return {
+				leftToBoth: response[faderId * 2],
+				rightToBoth: response[faderId * 2 + 1],
+			};
+		} else {
+			// TODO(Peter): Ensure value is in range of result, otherwise what do we return/throw?
+		}
 	}
 
 	/**

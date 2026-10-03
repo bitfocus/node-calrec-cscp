@@ -24,7 +24,7 @@ export const TEST_CONFIG = {
 	port: parseInt(process.env.CALREC_PORT || "3322"),
 	maxFaderCount: 42, // Configure for 42 faders
 	maxMainCount: 3, // Configure for 3 mains
-	testFaderId: 1, // Use fader 1 for testing
+	testFaderId: 1, // Use fader 1 for testing, N.B. some tests can impact all faders!
 	testAuxId: 1, // Use aux 1 for testing
 	testMainId: 1, // Use main 1 for testing
 };
