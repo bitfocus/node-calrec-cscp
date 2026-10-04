@@ -22,11 +22,15 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
+      - name: Setup Biome
+        uses: biomejs/setup-biome@v2
       - name: Prepare Environment
         run: |
           npm install
         env:
           CI: true
+      - name: Run Biome
+        run: biome ci --reporter=github .
       - name: lint
         run: |
           npm run lint

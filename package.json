@@ -9,7 +9,9 @@
 			"default": "./dist/index.js"
 		}
 	},
-	"files": ["dist"],
+	"files": [
+		"dist"
+	],
 	"sideEffects": false,
 	"repository": {
 		"type": "git",
