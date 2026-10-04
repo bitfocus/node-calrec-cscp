@@ -95,6 +95,7 @@ const NON_ID_SPECIFIC_COMMANDS = new Set<number>([
 	COMMANDS.READ_CONSOLE_NAME,
 	COMMANDS.READ_AVAILABLE_AUX,
 	COMMANDS.READ_AVAILABLE_MAINS,
+	COMMANDS.READ_STEREO_IMAGE,
 ]);
 
 /**
@@ -717,21 +718,27 @@ export class CalrecClient extends EventEmitter {
 				}
 			case COMMANDS.READ_STEREO_IMAGE:
 				try {
-					if (data.length >= 4) {
-						return {
-							leftToBoth: !!data[2],
-							rightToBoth: !!data[3],
-						} as StereoImage;
+					const maxFaders = this.getEffectiveMaxFaderCount();
+					const stereoImage = new Array(maxFaders * 2).fill(false);
+					for (
+						let byteIndex = 0;
+						byteIndex < Math.min(data.length, Math.ceil((maxFaders * 2) / 8));
+						byteIndex++
+					) {
+						const byte = data[byteIndex];
+						for (let bitIndex = 0; bitIndex < 8; bitIndex++) {
+							const stereoIndex = byteIndex * 8 + bitIndex;
+							if (stereoIndex < maxFaders * 2) {
+								stereoImage[stereoIndex] = (byte & (1 << bitIndex)) !== 0;
+							}
+						}
 					}
-					throw new Error("Stereo image data too short");
+					return stereoImage;
 				} catch (error) {
 					this.debugWithTimestamp(
 						`[CalrecClient] Failed to parse stereo image: ${error}, data: ${data.toString("hex")}`,
 					);
-					return {
-						leftToBoth: false,
-						rightToBoth: false,
-					} as StereoImage;
+					return new Array(this.getEffectiveMaxFaderCount() * 2).fill(false);
 				}
 			case COMMANDS.READ_FADER_CUT:
 				return data[2] === 0; // 0 = cut, 1 = uncut
@@ -850,6 +857,26 @@ export class CalrecClient extends EventEmitter {
 						this.emit("mainPflChange", mainId, isPfl);
 					}
 					break;
+				case COMMANDS.READ_FADER_ASSIGNMENT: // 0x0011 -> WRITE_FADER_ASSIGNMENT: 0x8011
+					if (data.length >= 6) {
+						const faderId = data.readUInt16BE(0);
+						const type = data[2];
+						const width = data[3];
+						const calrecId = data.readUInt16BE(4);
+
+						const assignment = {
+							faderId,
+							type,
+							width,
+							calrecId,
+						} as FaderAssignment;
+
+						this.debugWithTimestamp(
+							`[CalrecClient] Emitting faderAssignmentChange: faderId=${faderId}, type=${type}, width=${width}, calrecId=${calrecId}`,
+						);
+						this.emit("faderAssignmentChange", assignment);
+					}
+					break;
 				case COMMANDS.READ_AUX_OUTPUT_LEVEL: // 0x0013 -> WRITE_AUX_OUTPUT_LEVEL: 0x8013
 					if (data.length >= 4) {
 						const auxId = data.readUInt16BE(0);
@@ -883,6 +910,29 @@ export class CalrecClient extends EventEmitter {
 				case COMMANDS.READ_AVAILABLE_AUX: // 0x0010 -> WRITE_AVAILABLE_AUX: 0x8010
 				case COMMANDS.READ_AVAILABLE_MAINS: // 0x0014 -> WRITE_AVAILABLE_MAINS: 0x8014
 					this.emitAvailableChange(baseCommand, data);
+					break;
+				case COMMANDS.READ_STEREO_IMAGE: // 0x0016 -> ‎WRITE_STEREO_IMAGE‎: 0x8016
+					if (data.length >= 1) {
+						const stereoImage = this.parseResponseData(
+							baseCommand,
+							data,
+						) as boolean[];
+						const faderCount = Math.floor(stereoImage.length / 2);
+						const maxFaders = this.getEffectiveMaxFaderCount();
+						for (
+							let faderIndex = 0;
+							faderIndex < Math.min(faderCount, maxFaders);
+							faderIndex++
+						) {
+							this.debugWithTimestamp(
+								`[CalrecClient] Emitting stereoImageChange: faderId=${faderIndex}, leftToBoth=${stereoImage[faderIndex * 2]}, rightToBoth=${stereoImage[faderIndex * 2 + 1]}`,
+							);
+							this.emit("stereoImageChange", faderIndex, {
+								leftToBoth: stereoImage[faderIndex * 2],
+								rightToBoth: stereoImage[faderIndex * 2 + 1],
+							});
+						}
+					}
 					break;
 				default:
 					// For other write commands, just emit as unsolicited message
@@ -1795,13 +1845,17 @@ export class CalrecClient extends EventEmitter {
 			);
 		}
 
-		const data = Buffer.alloc(2);
-		data.writeUInt16BE(faderId, 0);
 		const response = await this.sendCommand<StereoImage>(
 			COMMANDS.READ_STEREO_IMAGE,
-			data,
 		);
-		return response;
+		if (faderId * 2 + 1 <= response.length) {
+			return {
+				leftToBoth: response[faderId * 2],
+				rightToBoth: response[faderId * 2 + 1],
+			};
+		} else {
+			// TODO(Peter): Ensure value is in range of result, otherwise what do we return/throw?
+		}
 	}
 
 	/**
